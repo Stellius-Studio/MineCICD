@@ -105,7 +105,8 @@ public class GitSecret {
 
         StringBuilder gitAttributesContent = new StringBuilder();
         for (String filePath : secrets.keySet()) {
-            gitAttributesContent.append(filePath).append(" filter=").append(filePath).append("\n");
+            String normalizedPath = filePath.replace("\\", "/");
+            gitAttributesContent.append(normalizedPath).append(" filter=").append(normalizedPath).append("\n");
         }
         Files.write(gitAttributesFile.toPath(), gitAttributesContent.toString().getBytes());
 
@@ -141,7 +142,8 @@ public class GitSecret {
                 continue;
             }
 
-            gitConfigLines.add("[filter \"" + filePath + "\"]");
+            String normalizedPath = filePath.replace("\\", "/");
+            gitConfigLines.add("[filter \"" + normalizedPath + "\"]");
 
             StringBuilder cleanCommand = new StringBuilder("\tclean = ");
             StringBuilder smudgeCommand = new StringBuilder("\tsmudge = ");

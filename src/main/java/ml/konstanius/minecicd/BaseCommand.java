@@ -52,6 +52,30 @@ public class BaseCommand implements CommandExecutor {
 
         Bukkit.getScheduler().runTaskAsynchronously(plugin, () -> {
             switch (subCommand) {
+                case "branch": {
+                    if (args.length != 2) {
+                        sender.sendMessage(getRichMessage("branch-usage", true, new HashMap<String, String>() {{
+                            put("label", label);
+                        }}));
+                        return;
+                    }
+
+                    String newBranch = args[1];
+                    try {
+                        GitUtils.switchBranch(newBranch);
+                    } catch (Exception e) {
+                        MineCICD.logError(e);
+                        sender.sendMessage(getRichMessage("branch-failed", true, new HashMap<String, String>() {{
+                            put("error", e.getMessage());
+                        }}));
+                        return;
+                    }
+
+                    sender.sendMessage(getRichMessage("branch-success", true, new HashMap<String, String>() {{
+                        put("branch", newBranch);
+                    }}));
+                    break;
+                }
                 case "add": {
                     if (args.length != 2) {
                         sender.sendMessage(getRichMessage("add-usage", true, new HashMap<String, String>() {{
@@ -696,6 +720,10 @@ public class BaseCommand implements CommandExecutor {
                         case "reset-local-changes": {
                             try (Git git = Git.open(new File("."))) {
                                 RevCommit head = git.log().setMaxCount(1).call().iterator().next();
+                                try {
+                                    GitSecret.configureGitSecretFiltering(GitSecret.readFromSecretsStore());
+                                } catch (Exception ignored) {
+                                }
                                 GitUtils.reset(head.getName());
 
                                 sender.sendMessage(getRichMessage("resolve-success-reset-local-changes", true));

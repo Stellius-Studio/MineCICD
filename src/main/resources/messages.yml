@@ -67,6 +67,7 @@ script-success: "&aScript ran successfully."
 
 invalid-subcommand: "&c Unknown command. Use /{label} help for a list of commands."
 help:
+  - "&a/{label} branch <name> &7- &bSwitches the active branch tracked by this server."
   - "&a/{label} pull &7- &bPulls the latest changes from the remote or sets up the local repository if run for the first time."
   - "&a/{label} push <commit message> &7- &bPushes the latest changes to the remote."
   - "&a/{label} add <file / 'directory/'> &7- &bAdds a file or directory to the repository."
@@ -92,6 +93,10 @@ status:
   - "&7Local changes: &a{local-changes}"
   - "&7Changes on remote: &a{remote-changes}"
   - "&7=========================="
+
+branch-usage: "&cInvalid arguments. Usage: /{label} branch <name>"
+branch-success: "&aSwitched active branch to &b{branch}&a."
+branch-failed: "&cError switching branch: {error}"
 
 diff-usage: "&cInvalid arguments. Usage: /{label} diff <local / remote>"
 diff-failed: "&cError getting diff: {error}"
@@ -138,6 +143,10 @@ bossbar-webhook-failed: "Webhook execution failed"
 bossbar-script: "Running script"
 bossbar-script-success: "Script ran successfully"
 bossbar-script-failed: "Script execution failed"
+
+bossbar-branching: "Switching branch"
+bossbar-branched: "Switched branch successfully"
+bossbar-branch-failed: "Failed to switch branch"
 
 webhook-event:
   - "&7=========== &aWebHook&7 ==========="

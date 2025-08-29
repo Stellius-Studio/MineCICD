@@ -305,7 +305,24 @@ public abstract class GitUtils {
                         newRepo = false;
                     }
 
+                    // Re-configure secrets filters after potential reset/checkout (reset may have removed .gitattributes)
+                    try {
+                        GitSecret.configureGitSecretFiltering(GitSecret.readFromSecretsStore());
+                    } catch (Exception ignored) {
+                    }
+
+                    // Force re-checkout with filters so placeholders get smudged on initial setup
+                    try {
+                        git.reset().setMode(ResetCommand.ResetType.HARD).setRef("HEAD").call();
+                    } catch (Exception ignored) {
+                    }
+
                     git.add().addFilepattern(".gitignore").call();
+                    // Ensure .gitattributes is tracked so smudge/clean filters persist across resets and on fresh servers
+                    try {
+                        git.add().addFilepattern(".gitattributes").call();
+                    } catch (Exception ignored) {
+                    }
                     if (!getLocalChanges().isEmpty() || newRepo) {
                         git.commit().setAuthor("MineCICD", "MineCICD").setMessage("MineCICD initial setup commit").call();
                         git.push().setCredentialsProvider(getCredentials()).call();
@@ -402,6 +419,11 @@ public abstract class GitUtils {
                 }
             } else {
                 try (Git git = Git.open(new File("."))) {
+                    // Ensure secrets filters are configured prior to pulling so smudge applies during checkout/merge
+                    try {
+                        GitSecret.configureGitSecretFiltering(GitSecret.readFromSecretsStore());
+                    } catch (Exception ignored) {
+                    }
                     // fetch which files are going to be changed by pulling (where remote is ahead of local)
                     String current = getCurrentRevision();
                     String latestRemote = getLatestRemoteRevision();
@@ -844,6 +866,70 @@ public abstract class GitUtils {
             }
 
             git.checkout().setName(Config.getString("git.branch")).call();
+        }
+    }
+
+    public static void switchBranch(String newBranch) throws IOException, GitAPIException {
+        if (!activeRepoExists()) {
+            throw new IllegalStateException("Repository has to be pulled (cloned) before switching branches.");
+        }
+        if (newBranch == null || newBranch.trim().isEmpty()) {
+            throw new IllegalArgumentException("Branch name must not be empty");
+        }
+
+        boolean ownsBusy = !busyLock;
+        if (ownsBusy) busyLock = true;
+
+        String bar = MineCICD.addBar(getCleanMessage("bossbar-branching", true), BarColor.BLUE, BarStyle.SOLID);
+
+        try (Git git = Git.open(new File("."))) {
+            // Ensure worktree is clean (no uncommitted changes)
+            if (!getLocalChanges().isEmpty()) {
+                throw new IllegalStateException("There are uncommitted changes. Push or reset local changes before switching branch.");
+            }
+
+            // Fetch remotes
+            try {
+                git.fetch().setCredentialsProvider(getCredentials()).call();
+            } catch (Exception ignored) {
+            }
+
+            // If remote branch exists, hard reset to it after checkout
+            boolean remoteExists = git.branchList().setListMode(org.eclipse.jgit.api.ListBranchCommand.ListMode.REMOTE).call()
+                    .stream().anyMatch(ref -> ref.getName().equals("refs/remotes/origin/" + newBranch));
+
+            // Create local branch if it doesn't exist
+            boolean localExists = git.branchList().call().stream().anyMatch(ref -> ref.getName().equals("refs/heads/" + newBranch));
+            if (!localExists) {
+                try {
+                    git.branchCreate().setName(newBranch).call();
+                } catch (RefAlreadyExistsException ignored) {
+                }
+            }
+
+            // Checkout the branch
+            git.checkout().setName(newBranch).call();
+
+            // If remote exists, align local to remote
+            if (remoteExists) {
+                git.reset().setMode(ResetCommand.ResetType.HARD).setRef("origin/" + newBranch).call();
+            }
+
+            // Update config
+            Config.set("git.branch", newBranch);
+
+            MineCICD.changeBar(bar, getCleanMessage("bossbar-branched", true), BarColor.GREEN, BarStyle.SOLID);
+            MineCICD.removeBar(bar, Config.getInt("bossbar.duration"));
+        } catch (Exception e) {
+            if (!(e instanceof IllegalStateException)) {
+                MineCICD.log("Failed to switch branch", Level.SEVERE);
+                MineCICD.logError(e);
+            }
+            MineCICD.changeBar(bar, getCleanMessage("bossbar-branch-failed", true), BarColor.RED, BarStyle.SEGMENTED_12);
+            MineCICD.removeBar(bar, Config.getInt("bossbar.duration"));
+            throw e;
+        } finally {
+            if (ownsBusy) busyLock = false;
         }
     }
 }

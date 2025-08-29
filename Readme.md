@@ -119,6 +119,7 @@ This feature is disabled by default, to enable it, do the following:
 This will unload and load plugins if their jarfiles change, are removed. or new ones are added
 
 ## Commands
+- `minecicd branch <name>` - Switches the active branch tracked by this server.
 - `minecicd pull` - Pulls the latest changes from the remote or sets up the local repository if run for the first time.
 - `minecicd push <commit message>` - Pushes the latest changes to the remote.
 - `minecicd add <file / 'directory/'>` - Adds a file or directory to the repository.

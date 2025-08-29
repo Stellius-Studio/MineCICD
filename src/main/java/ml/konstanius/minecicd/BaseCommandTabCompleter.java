@@ -35,6 +35,7 @@ public class BaseCommandTabCompleter implements TabCompleter {
         int argLength = args.length;
         if (argLength == 1) {
             ArrayList<String> list = new java.util.ArrayList<>();
+            list.add("branch");
             list.add("add");
             list.add("remove");
             list.add("pull");
