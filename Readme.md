@@ -44,6 +44,8 @@ simultaneously, with the ability to track changes and apply them to all servers 
 6. Reload the config with `/minecicd reload`
 7. Load the repository with `/minecicd pull`
 
+Note: On first init, MineCICD will check out or create the configured branch (config key `git.branch`) before the initial commit/push, avoiding accidental creation of a default `master` branch.
+
 ### Now you are all set! - Time to start syncing
 - Add files to Git Tracking with `/minecicd add <file>`
 - Load changes made to the repository with `/minecicd pull`
@@ -54,6 +56,19 @@ simultaneously, with the ability to track changes and apply them to all servers 
 - This includes plugins, server configurations, scripts, and other files that are part of the server setup
 - **You should NOT track player data, world data, or other files that are generated and updated dynamically**
    - **Tracking world or player data will inevitably lead to conflicts and issues**
+
+### Protected branches (optional)
+You can protect critical branches from accidental pushes. Configure in `config.yml`:
+```yaml
+git:
+  protected-push-mode: "off"        # off | require-force | block
+  protected-branches: "main, production"  # Comma-separated list
+```
+- off: No special handling.
+- require-force: Pushes to any protected branch require using `minecicd push force <message>`.
+- block: Pushes to protected branches are blocked.
+
+Tip: Use `/minecicd branches` to see your current branch and ahead/behind counts.
 
 ### Instant commit propagation setup
 1. Create a webhook for your repository (Repo settings -> Webhooks -> Add webhook)
@@ -118,10 +133,18 @@ This feature is disabled by default, to enable it, do the following:
 
 This will unload and load plugins if their jarfiles change, are removed. or new ones are added
 
+### Merging external branches (safe composition)
+Use `/minecicd merge <remote|url> <branch> [ours|theirs]` to fetch and merge another repository/branch into your working tree without auto-commit.
+- Remote can be an existing remote name (e.g., `origin`) or a full Git URL.
+- Preference `ours|theirs` optionally biases conflict resolution.
+- After a successful merge, MineCICD writes a local marker file to prevent accidental pushes. To push deliberately after reviewing, use `minecicd push force <message>`.
+
 ## Commands
 - `minecicd branch <name>` - Switches the active branch tracked by this server.
 - `minecicd pull` - Pulls the latest changes from the remote or sets up the local repository if run for the first time.
-- `minecicd push <commit message>` - Pushes the latest changes to the remote.
+- `minecicd push <commit message>` or `minecicd push force <commit message>` - Pushes local changes to the remote. Use `force` only if required by protected-branch settings or after a deliberate external merge.
+- `minecicd branches` - Lists local branches, marks the current one, and shows ahead/behind counts vs `origin`.
+- `minecicd merge <remote|url> <branch> [ours|theirs]` - Safely fetches and merges an external branch into the working tree without auto-commit. A safety marker prevents accidental push unless you use `push force`.
 - `minecicd add <file / 'directory/'>` - Adds a file or directory to the repository.
 - `minecicd remove <file / 'directory/'>` - Removes a file or directory from the repository.
 - `minecicd reset <commit hash / link>` - Hard resets the current branch to the specified commit. (Commits will not be reverted)
