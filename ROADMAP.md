@@ -11,41 +11,41 @@ Note: Items marked (idea) are proposals; they may change or be rejected after co
 - [x] Protected branch safety: Configurable push protection via `git.protected-push-mode` and `git.protected-branches`; force override supported.
 
 ## 2. Secrets & Configuration
-- Secrets validation command: `minecicd secrets validate` to check placeholders exist in target files and report missing keys. Feasibility: low.
-- Secrets dry‑run: `minecicd secrets preview <file>` to show a diff of applied secrets without modifying the worktree. Feasibility: low/medium.
-- Template helpers: Optional `${ENV:VAR}` or `${RANDOM_PORT}` helper tokens in secrets.yml (resolved locally, not committed). Feasibility: medium.
-- Auto‑repair filters: On startup/pull, verify `.gitattributes` and `.git/config` contain expected filters; self‑heal if not. Feasibility: low (partly implemented already).
+- [x] Secrets validation command: `minecicd secrets validate` checks that placeholders exist in target files and reports missing keys.
+- [x] Secrets dry‑run: `minecicd secrets preview <file>` shows a diff of applied secrets without modifying the worktree.
+- [x] Template helpers: `${ENV:VAR}` and `${RANDOM_PORT}` helper tokens in secrets.yml (resolved locally, not committed).
+- [x] Auto‑repair filters: On startup/reload and during pull, `.gitattributes` and `.git/config` are verified and re‑applied to self‑heal as needed.
 
 ## 3. CI/Webhook & Automation
-- Webhook test command: `minecicd webhook test` to simulate a push event (no network). Feasibility: low.
-- Scheduled pull: Cron‑like schedule in config to periodically `pull` (with optional `dry-run`). Feasibility: low/medium.
-- Rate limiting & retry: Backoff strategy on pull/push failures; configurable limits. Feasibility: low.
+- [x] Webhook test command: `minecicd webhook test` simulates a push event locally (no network).
+- [x] Scheduled pull: Cron‑like schedule in config to periodically `pull` with optional `dry-run`.
+- [x] Rate limiting & retry: Exponential backoff on pull/push failures; configurable limits in config.
 
 ## 4. Safety, Recovery & Backups
-- One‑shot backup: `minecicd backup <name>` to zip tracked files (and optionally selected folders) before risky operations. Feasibility: low/medium.
-- Doctor/Diagnostics: `minecicd doctor` to check environment (Java, OS, webhooks port, credentials, repo state, filters). Feasibility: low.
-- Safer resets: `minecicd reset --confirm <commit>` guard or interactive confirmation for destructive operations (configurable). Feasibility: low.
+- [x] One‑shot backup: `minecicd backup <name> [extra paths...]` zips tracked files (HEAD) and optional paths into plugins/MineCICD/backups/ with timestamped filename.
+- [x] Doctor/Diagnostics: `minecicd doctor` prints a diagnostic report (Java, OS, webhook status, credentials presence, repo state, ahead/behind, secrets filters).
+- [x] Safer resets: `minecicd reset --confirm <commit>` required by default (config: `git.reset.require-confirm`).
 
 ## 5. UX, Commands & Feedback
-- Dry‑run mode: `minecicd pull --dry-run` and `minecicd push --dry-run` to show planned actions and diffs without writing. Feasibility: medium.
-- Incremental diff paging: Allow `minecicd diff remote 2` for paged output; filter by path prefix. Feasibility: low.
-- Better bossbar/messages toggles: Per‑action verbosity level; configurable durations per action. Feasibility: low.
+- [x] Dry‑run mode: `minecicd pull --dry-run` and `minecicd push --dry-run` show planned actions (file list) without writing.
+- [x] Incremental diff paging: `minecicd diff <local|remote> [page] [pathPrefix]` for paged output and optional path filter.
+- [x] Better bossbar/messages toggles: Per‑action verbosity and durations via `bossbar.enabled.<action>` and `bossbar.duration.<action>`.
 
 ## 6. Experimental Jar Handling
-- Safer hot‑reload integration: Improve detection of plugin names; fallback to `plugins/<plugin>/plugin.yml` parsing. Feasibility: medium.
-- Staging step: Queue jar changes and apply on confirm/restart, to avoid mid‑tick reloads. Feasibility: medium.
+- [x] Safer hot‑reload integration: Plugin name detection reads plugin.yml from jars, with fallback to path parsing.
+- [x] Staging step: Jar unload/load operations are staged when enabled (`experimental-jar-staging`); apply with `/minecicd jars apply`. 
 
 ## 7. Windows/Linux Parity & Ops
-- Portable binary checks: Improve detection of `sed`/tools on various distros; cache capability checks. Feasibility: low.
-- Path normalization audit: Ensure all path joins and comparisons are OS‑neutral. Feasibility: low.
+- [x] Portable binary checks: Improved detection of `sed` on various distros (`command -v`, `which`, common paths, `sed --version`) with 5‑minute cached capability checks.
+- [x] Path normalization audit: Ensured OS‑neutral joins and comparisons in diffs and filters; git paths normalized to forward slashes consistently.
 
 ## 8. Observability
-- Optional metrics: Count of pulls/pushes, failures, durations (exposed via simple `/minecicd metrics`). Feasibility: low.
-- Log redaction: Ensure secrets are never printed; add explicit redaction filters. Feasibility: low.
+- [x] Optional metrics: Count of pulls/pushes, failures, and total/avg durations; exposed via `/minecicd metrics`.
+- [x] Log redaction: Explicit redaction filters ensure secrets and credentials are masked in all logged messages and stack traces.
 
 ## 9. Documentation
-- Admin playbooks: Common workflows (dev → staging → prod), rollback procedures, secret patterns. Feasibility: low.
-- Troubleshooting matrix: Map common errors/symptoms to fixes (e.g., secrets not applying, webhook 403, etc.). Feasibility: low.
+- [x] Admin playbooks: Added common workflows (dev → staging → prod), rollback procedures, and secret patterns to Readme.md.
+- [x] Troubleshooting matrix: Added a matrix mapping common errors/symptoms (e.g., secrets not applying, webhook 403) to recommended fixes in Readme.md.
 
 ---
 Contributions welcome! If you plan to work on any of these, please open an issue first to coordinate design and scope.

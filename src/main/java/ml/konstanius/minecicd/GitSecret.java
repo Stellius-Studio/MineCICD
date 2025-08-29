@@ -12,6 +12,8 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.nio.file.Files;
 import java.util.*;
+import java.net.ServerSocket;
+import java.nio.charset.StandardCharsets;
 
 /**
  * Functionality documentation:
@@ -29,6 +31,133 @@ import java.util.*;
  * - A secret that it will replace in the file
  */
 public class GitSecret {
+    // Cached sed capability detection (Linux/Unix)
+    private static Boolean SED_AVAILABLE = null;
+    private static long SED_LAST_CHECK_MS = 0L;
+    private static boolean isSedAvailable() {
+        if (SystemUtils.IS_OS_WINDOWS) return false;
+        long now = System.currentTimeMillis();
+        if (SED_AVAILABLE != null && (now - SED_LAST_CHECK_MS) < 5 * 60 * 1000L) { // cache 5 minutes
+            return SED_AVAILABLE;
+        }
+        boolean available = false;
+        try {
+            // Try command -v
+            Process p1 = new ProcessBuilder("sh", "-c", "command -v sed >/dev/null 2>&1").start();
+            int e1 = p1.waitFor();
+            // Try which
+            int e2 = 1;
+            try {
+                Process p2 = new ProcessBuilder("sh", "-c", "which sed >/dev/null 2>&1").start();
+                e2 = p2.waitFor();
+            } catch (Exception ignored) {}
+            // Try common path
+            boolean pathExists = new java.io.File("/bin/sed").exists() || new java.io.File("/usr/bin/sed").exists();
+            // Try executing sed --version quickly (best-effort)
+            int e3 = 1;
+            try {
+                Process p3 = new ProcessBuilder("sh", "-c", "sed --version >/dev/null 2>&1").start();
+                e3 = p3.waitFor();
+            } catch (Exception ignored) {}
+            available = (e1 == 0) || (e2 == 0) || (e3 == 0) || pathExists;
+        } catch (Exception ignored) {
+            available = false;
+        }
+        SED_AVAILABLE = available;
+        SED_LAST_CHECK_MS = now;
+        return available;
+    }
+    private static String resolveHelpers(String value) throws InvalidConfigurationException {
+        if (value == null) return null;
+        String result = value;
+        // ${ENV:VAR}
+        int start;
+        while ((start = result.indexOf("${ENV:")) != -1) {
+            int end = result.indexOf("}", start);
+            if (end == -1) break;
+            String token = result.substring(start, end + 1);
+            String inner = result.substring(start + 6, end); // after ${ENV:
+            String envVal = System.getenv(inner);
+            if (envVal == null) envVal = ""; // empty if missing
+            result = result.replace(token, envVal);
+        }
+        // ${RANDOM_PORT}
+        while ((start = result.indexOf("${RANDOM_PORT}")) != -1) {
+            int port = 0;
+            try (ServerSocket socket = new ServerSocket(0)) {
+                port = socket.getLocalPort();
+            } catch (IOException ignored) {}
+            result = result.replace("${RANDOM_PORT}", String.valueOf(port));
+        }
+        return result;
+    }
+
+    public static class ValidationIssue {
+        public final String file;
+        public final String message;
+        public ValidationIssue(String file, String message) {
+            this.file = file;
+            this.message = message;
+        }
+        @Override public String toString() { return (file == null ? "" : (file + ": ")) + message; }
+    }
+
+    public static List<ValidationIssue> validateSecrets(HashMap<String, ArrayList<GitSecret>> secrets) {
+        List<ValidationIssue> issues = new ArrayList<>();
+        for (Map.Entry<String, ArrayList<GitSecret>> e : secrets.entrySet()) {
+            String path = e.getKey();
+            File f = new File(path);
+            if (!f.exists()) {
+                issues.add(new ValidationIssue(path, "Target file does not exist"));
+                continue;
+            }
+            String content;
+            try {
+                content = new String(Files.readAllBytes(f.toPath()), StandardCharsets.UTF_8);
+            } catch (IOException ex) {
+                issues.add(new ValidationIssue(path, "Failed to read file: " + ex.getMessage()));
+                continue;
+            }
+            for (GitSecret s : e.getValue()) {
+                String placeholder = "{{" + s.identifier + "}}";
+                if (!content.contains(placeholder)) {
+                    issues.add(new ValidationIssue(path, "Missing placeholder " + placeholder));
+                }
+            }
+        }
+        return issues;
+    }
+
+    public static String previewSecrets(String filePath, HashMap<String, ArrayList<GitSecret>> secrets) throws IOException {
+        ArrayList<GitSecret> list = secrets.get(filePath);
+        if (list == null || list.isEmpty()) {
+            return "No secrets configured for this file.";
+        }
+        File f = new File(filePath);
+        if (!f.exists()) return "Target file does not exist.";
+        String original = new String(Files.readAllBytes(f.toPath()), StandardCharsets.UTF_8);
+        String modified = original;
+        for (GitSecret s : list) {
+            modified = modified.replace("{{" + s.identifier + "}}", s.secret);
+        }
+        if (original.equals(modified)) return "No changes after applying secrets.";
+        // Simple line-by-line diff
+        StringBuilder sb = new StringBuilder();
+        sb.append("--- ").append(filePath).append(" (current)\n");
+        sb.append("+++ ").append(filePath).append(" (with secrets)\n");
+        String[] o = original.split("\r?\n", -1);
+        String[] m = modified.split("\r?\n", -1);
+        int max = Math.max(o.length, m.length);
+        for (int i = 0; i < max; i++) {
+            String ol = i < o.length ? o[i] : "";
+            String ml = i < m.length ? m[i] : "";
+            if (!Objects.equals(ol, ml)) {
+                sb.append("-").append(ol).append("\n");
+                sb.append("+").append(ml).append("\n");
+            }
+        }
+        return sb.toString();
+    }
     public static HashMap<String, ArrayList<GitSecret>> readFromSecretsStore() throws IOException, InvalidConfigurationException {
         File secretsFile = new File(".", "secrets.yml");
         HashMap<String, ArrayList<GitSecret>> secrets = new HashMap<>();
@@ -72,6 +201,8 @@ public class GitSecret {
                     continue;
                 }
                 String secret = section.getString(secretIdentifier);
+                                // Resolve helper tokens locally (not committed)
+                                secret = resolveHelpers(secret);
 
                 if (secret == null) {
                     throw new InvalidConfigurationException("Every secret must have a value");
@@ -125,17 +256,8 @@ public class GitSecret {
             }
         }
 
-        // Check if sed is installed
-        boolean sedInstalled = false;
-        if (!SystemUtils.IS_OS_WINDOWS) {
-            try {
-                Process process = Runtime.getRuntime().exec("which sed");
-                process.waitFor();
-                sedInstalled = process.exitValue() == 0;
-            } catch (Exception ignored) {
-                // Probably barebones Linux in Docker -> No which, no sed
-            }
-        }
+        // Check if sed is installed (cached capability check)
+        boolean sedInstalled = isSedAvailable();
 
         for (String filePath : secrets.keySet()) {
             if (secrets.get(filePath).isEmpty()) {

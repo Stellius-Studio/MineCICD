@@ -13,6 +13,14 @@ git:
   protected-push-mode: "off"
   # Comma-separated list of protected branches (e.g., "main, master, production")
   protected-branches: ""
+  retry:
+    # Retry/backoff settings for pull/push operations
+    max-attempts: 3
+    base-delay-ms: 1000
+    max-delay-ms: 10000
+  reset:
+    # Require explicit --confirm flag for destructive reset command
+    require-confirm: true
 
 # Whether experimental jar unloading and loading should be enabled
 # This requires PlugManX to be installed and working on your server
@@ -20,13 +28,21 @@ git:
 # Will inevitably cause a lot of issues if used on library or core plugins
 # Requires you to remove "*.jar" from the .gitignore file in your server root
 experimental-jar-loading: true
+# If enabled, jar changes are staged (queued) during pulls and must be applied manually with /minecicd jars apply
+experimental-jar-staging: true
 
 bossbar:
   # Whether to enable the boss bar
   enabled: true
+  # Per-action overrides (optional): bossbar.enabled.<action> and bossbar.duration.<action>
+  # Actions: pull, push, add, remove, merge, webhook, reset, backup, doctor
+  enabled.pull: true
+  enabled.push: true
   # How long the action result should be visible for, in ticks (20 ticks = 1 second)
   # High values here WILL delay further commands of the same type
   duration: 100
+  duration.pull: 100
+  duration.push: 100
 
 # Filtering in the config is obsolete with V2
 # See the .gitignore file in your server root for filtering
@@ -52,6 +68,14 @@ webhooks:
   allow-individual-reload: true # This might not work with all plugins, issues will be displayed in the console. It is recommended to disable this on production servers
   allow-global-reload: false # This is highly discouraged, as it can cause issues with many plugins
   allow-restart: true
+
+automation:
+  pull:
+    enabled: false
+    # Cron-like schedule (supports pattern "*/N * * * *" meaning every N minutes)
+    cron: "*/5 * * * *"
+    # When true, scheduled pulls only fetch and report remote changes without applying them
+    dry-run: false
 
 # DO NOT CHANGE THIS
 # Format: 1.2.3    ->  10203

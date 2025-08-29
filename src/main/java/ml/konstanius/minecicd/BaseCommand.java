@@ -201,10 +201,27 @@ public class BaseCommand implements CommandExecutor {
                     break;
                 }
                 case "pull": {
-                    if (args.length != 1 && args.length != 2) {
+                    if (args.length < 1 || args.length > 2) {
                         sender.sendMessage(getRichMessage("pull-usage", true, new HashMap<String, String>() {{
                             put("label", label);
                         }}));
+                        return;
+                    }
+
+                    // Dry-run preview
+                    if (args.length == 2 && args[1].equalsIgnoreCase("--dry-run")) {
+                        try {
+                            List<String> lines = GitUtils.previewPullChanges();
+                            sender.sendMessage("Pull dry-run: planned changes (remote ahead):");
+                            if (lines.isEmpty()) sender.sendMessage(" - no changes");
+                            int idx = 1;
+                            for (String l : lines) sender.sendMessage(" " + (idx++) + ". " + l);
+                        } catch (Exception e) {
+                            MineCICD.logError(e);
+                            sender.sendMessage(getRichMessage("pull-failed", true, new HashMap<String, String>() {{
+                                put("error", e.getMessage());
+                            }}));
+                        }
                         return;
                     }
 
@@ -219,8 +236,8 @@ public class BaseCommand implements CommandExecutor {
                     }
 
                     if (!GitUtils.getLocalChanges().isEmpty() && !forceOverwriteChanges) {
-                        String bar = MineCICD.addBar(getCleanMessage("bossbar-pull-aborted-changes", true), BarColor.YELLOW, BarStyle.SEGMENTED_12);
-                        MineCICD.removeBar(bar, Config.getInt("bossbar.duration"));
+                        String bar = MineCICD.addBarFor("pull", getCleanMessage("bossbar-pull-aborted-changes", true), BarColor.YELLOW, BarStyle.SEGMENTED_12);
+                        MineCICD.removeBarFor(bar, "pull");
                         sender.sendMessage(getRichMessage("pull-aborted", true, new HashMap<String, String>() {{
                             put("label", label);
                         }}));
@@ -258,6 +275,23 @@ public class BaseCommand implements CommandExecutor {
                         return;
                     }
 
+                    // Dry-run preview
+                    if (args[1].equalsIgnoreCase("--dry-run")) {
+                        try {
+                            List<String> changes = GitUtils.previewPushChanges();
+                            sender.sendMessage("Push dry-run: local uncommitted changes:");
+                            if (changes.isEmpty()) sender.sendMessage(" - no changes");
+                            int idx = 1;
+                            for (String l : changes) sender.sendMessage(" " + (idx++) + ". " + l);
+                        } catch (Exception e) {
+                            MineCICD.logError(e);
+                            sender.sendMessage(getRichMessage("push-failed", true, new HashMap<String, String>() {{
+                                put("error", e.getMessage());
+                            }}));
+                        }
+                        return;
+                    }
+
                     boolean force = false;
                     int msgStart = 1;
                     if (args[1].equalsIgnoreCase("force")) {
@@ -280,7 +314,7 @@ public class BaseCommand implements CommandExecutor {
                     }
 
                     try {
-                        GitUtils.push(message, author, force);
+                        GitUtils.pushWithRetry(message, author, force);
                     } catch (Exception e) {
                         MineCICD.logError(e);
                         sender.sendMessage(getRichMessage("push-failed", true, new HashMap<String, String>() {{
@@ -324,17 +358,165 @@ public class BaseCommand implements CommandExecutor {
                     }
                     break;
                 }
-                case "reset": {
-                    if (args.length != 2) {
-                        sender.sendMessage(getRichMessage("reset-usage", true, new HashMap<String, String>() {{
-                            put("label", label);
-                        }}));
+                case "webhook": {
+                    if (args.length == 2 && args[1].equalsIgnoreCase("test")) {
+                        try {
+                            WebhookHandler.simulatePushEvent();
+                            sender.sendMessage("Webhook test triggered. Check notifications and console for results.");
+                        } catch (Exception e) {
+                            MineCICD.logError(e);
+                            sender.sendMessage("Webhook test failed: " + e.getMessage());
+                        }
+                    } else {
+                        sender.sendMessage("Usage: /" + label + " webhook test");
+                    }
+                    break;
+                }
+                case "secrets": {
+                    if (args.length < 2) {
+                        sender.sendMessage("Usage: /" + label + " secrets <validate|preview> [file]");
                         return;
                     }
+                    String act = args[1].toLowerCase(Locale.getDefault());
+                    if ("validate".equals(act)) {
+                        try {
+                            HashMap<String, ArrayList<GitSecret>> map = GitSecret.readFromSecretsStore();
+                            List<GitSecret.ValidationIssue> issues = GitSecret.validateSecrets(map);
+                            if (issues.isEmpty()) {
+                                sender.sendMessage("Secrets validation OK: all placeholders present.");
+                            } else {
+                                sender.sendMessage("Secrets validation found issues:");
+                                for (GitSecret.ValidationIssue vi : issues) {
+                                    sender.sendMessage(" - " + vi.toString());
+                                }
+                            }
+                        } catch (Exception e) {
+                            MineCICD.logError(e);
+                            sender.sendMessage("Validation failed: " + e.getMessage());
+                        }
+                    } else if ("preview".equals(act)) {
+                        if (args.length < 3) {
+                            sender.sendMessage("Usage: /" + label + " secrets preview <file>");
+                            return;
+                        }
+                        String filePath = args[2];
+                        try {
+                            HashMap<String, ArrayList<GitSecret>> map = GitSecret.readFromSecretsStore();
+                            String diff = GitSecret.previewSecrets(filePath, map);
+                            for (String line : diff.split("\n")) {
+                                sender.sendMessage(line);
+                            }
+                        } catch (Exception e) {
+                            MineCICD.logError(e);
+                            sender.sendMessage("Preview failed: " + e.getMessage());
+                        }
+                    } else {
+                        sender.sendMessage("Usage: /" + label + " secrets <validate|preview> [file]");
+                    }
+                    break;
+                }
+                case "backup": {
+                    if (args.length < 2) {
+                        sender.sendMessage("Usage: /" + label + " backup <name> [extra path ...]");
+                        return;
+                    }
+                    String name = args[1];
+                    List<String> extras = new ArrayList<>();
+                    if (args.length > 2) {
+                        extras.addAll(Arrays.asList(Arrays.copyOfRange(args, 2, args.length)));
+                    }
+                    try {
+                        File zip = GitUtils.createBackup(name, extras);
+                        sender.sendMessage("Backup completed: " + zip.getPath());
+                    } catch (Exception e) {
+                        MineCICD.logError(e);
+                        sender.sendMessage("Backup failed: " + e.getMessage());
+                    }
+                    break;
+                }
+                case "metrics": {
+                    try {
+                        long pulls = MineCICD.metrics.pulls;
+                        long pullFails = MineCICD.metrics.pullFailures;
+                        long pullAvg = pulls > 0 ? (MineCICD.metrics.pullDurationMsTotal / pulls) : 0;
+                        long pushes = MineCICD.metrics.pushes;
+                        long pushFails = MineCICD.metrics.pushFailures;
+                        long pushAvg = pushes > 0 ? (MineCICD.metrics.pushDurationMsTotal / pushes) : 0;
+                        sender.sendMessage("Metrics:");
+                        sender.sendMessage(" - pulls: " + pulls + ", failures: " + pullFails + ", avg ms: " + pullAvg);
+                        sender.sendMessage(" - pushes: " + pushes + ", failures: " + pushFails + ", avg ms: " + pushAvg);
+                    } catch (Exception e) {
+                        MineCICD.logError(e);
+                        sender.sendMessage("Metrics failed: " + e.getMessage());
+                    }
+                    break;
+                }
+                case "doctor": {
+                    try {
+                        List<String> report = GitUtils.doctorReport();
+                        for (String line : report) sender.sendMessage(line);
+                    } catch (Exception e) {
+                        MineCICD.logError(e);
+                        sender.sendMessage("Doctor failed: " + e.getMessage());
+                    }
+                    break;
+                }
+                case "jars": {
+                    if (args.length < 2) {
+                        sender.sendMessage("Usage: /" + label + " jars <list|apply|clear>");
+                        return;
+                    }
+                    String sub = args[1].toLowerCase(Locale.getDefault());
+                    switch (sub) {
+                        case "list":
+                            if (MineCICD.stagedJarUnload.isEmpty() && MineCICD.stagedJarLoad.isEmpty()) {
+                                sender.sendMessage("No staged jar operations.");
+                            } else {
+                                sender.sendMessage("Staged unloads: " + (MineCICD.stagedJarUnload.isEmpty()?"<none>":String.join(", ", MineCICD.stagedJarUnload)));
+                                sender.sendMessage("Staged loads: " + (MineCICD.stagedJarLoad.isEmpty()?"<none>":String.join(", ", MineCICD.stagedJarLoad)));
+                            }
+                            break;
+                        case "apply":
+                            try { MineCICD.applyStagedJarOps(); sender.sendMessage("Applied staged jar operations."); }
+                            catch (Exception e) { MineCICD.logError(e); sender.sendMessage("Apply failed: " + e.getMessage()); }
+                            break;
+                        case "clear":
+                            MineCICD.stagedJarUnload.clear();
+                            MineCICD.stagedJarLoad.clear();
+                            sender.sendMessage("Cleared staged jar operations.");
+                            break;
+                        default:
+                            sender.sendMessage("Usage: /" + label + " jars <list|apply|clear>");
+                    }
+                    break;
+                }
+                case "reset": {
+                    boolean requireConfirm = true;
+                    try { requireConfirm = Config.getBoolean("git.reset.require-confirm"); } catch (Exception ignored) {}
+                    String commit = null;
+                    boolean ok = false;
+                    if (requireConfirm) {
+                        // Expect: reset --confirm <commit>
+                        if (args.length == 3 && "--confirm".equalsIgnoreCase(args[1])) {
+                            commit = args[2];
+                            ok = true;
+                        } else {
+                            sender.sendMessage("Usage: /" + label + " reset --confirm <commit hash|link>");
+                            return;
+                        }
+                    } else {
+                        if (args.length == 2) {
+                            commit = args[1];
+                            ok = true;
+                        } else {
+                            sender.sendMessage(getRichMessage("reset-usage", true, new HashMap<String, String>() {{
+                                put("label", label);
+                            }}));
+                            return;
+                        }
+                    }
 
-                    String commit = args[1];
                     if (commit.startsWith("http")) {
-                        // https://github.com/Konstanius/MineCICD-Server/commit/58f873575ff6126fd2270d594882ba0a2b1545b9
                         commit = commit.substring(commit.lastIndexOf('/') + 1);
                     }
 
@@ -598,30 +780,47 @@ public class BaseCommand implements CommandExecutor {
                     break;
                 }
                 case "diff": {
-                    if (args.length != 2) {
+                    if (args.length < 2 || args.length > 4) {
                         sender.sendMessage(getRichMessage("diff-usage", true, new HashMap<String, String>() {{
                             put("label", label);
                         }}));
                         return;
                     }
 
-                    if (!args[1].equalsIgnoreCase("local") && !args[1].equalsIgnoreCase("remote")) {
+                    boolean isLocal = args[1].equalsIgnoreCase("local");
+                    boolean isRemote = args[1].equalsIgnoreCase("remote");
+                    if (!isLocal && !isRemote) {
                         sender.sendMessage(getRichMessage("diff-usage", true, new HashMap<String, String>() {{
                             put("label", label);
                         }}));
                         return;
                     }
 
-                    ArrayList<String> changes;
+                    int page = 1; int pageSize = 20; String prefix = null;
+                    if (args.length >= 3) {
+                        try { page = Integer.parseInt(args[2]); } catch (NumberFormatException nf) { prefix = args[2]; }
+                    }
+                    if (args.length == 4) prefix = args[3];
+                    if (page < 1) page = 1;
+
+                    List<String> changes;
                     try (Git git = Git.open(new File("."))) {
-                        if (args[1].equalsIgnoreCase("local")) {
+                        if (isLocal) {
                             Set<String> localChanges = GitUtils.getLocalChanges();
                             changes = new ArrayList<>(localChanges);
+                            Collections.sort(changes);
                         } else {
                             List<DiffEntry> remoteChanges = GitUtils.getRemoteChanges(git);
                             changes = new ArrayList<>();
                             for (DiffEntry entry : remoteChanges) {
-                                changes.add(entry.getNewPath());
+                                String sym = "#";
+                                switch (entry.getChangeType()) {
+                                    case ADD: sym = "+"; break;
+                                    case DELETE: sym = "-"; break;
+                                    case MODIFY: sym = "#"; break;
+                                    default: break;
+                                }
+                                changes.add(sym + " " + entry.getNewPath());
                             }
                         }
                     } catch (Exception e) {
@@ -632,24 +831,32 @@ public class BaseCommand implements CommandExecutor {
                         return;
                     }
 
-                    if (args[1].equalsIgnoreCase("remote")) {
-                        sender.sendMessage(getRichMessage("diff-remote-header", false));
-                    } else {
-                        sender.sendMessage(getRichMessage("diff-local-header", false));
+                    if (prefix != null && !prefix.trim().isEmpty()) {
+                        String pre = prefix.replace('\\', '/');
+                        List<String> filtered = new ArrayList<>();
+                        for (String c : changes) {
+                            String path = c.startsWith("+") || c.startsWith("-") || c.startsWith("#") ? c.substring(2) : c;
+                            String norm = path.replace('\\', '/');
+                            if (norm.startsWith(pre)) filtered.add(c);
+                        }
+                        changes = filtered;
                     }
 
-                    if (changes.isEmpty()) {
-                        sender.sendMessage(getRichMessage("diff-no-changes", false));
+                    int total = changes.size();
+                    int pages = (int) Math.ceil(total / (double) pageSize);
+                    if (pages == 0) pages = 1;
+                    if (page > pages) page = pages;
+                    int from = (page - 1) * pageSize;
+                    int to = Math.min(from + pageSize, total);
+
+                    sender.sendMessage((isRemote ? "Remote" : "Local") + " changes (page " + page + "/" + pages + (prefix!=null? (", filter='"+prefix+"'") : "") + "):");
+                    if (total == 0) {
+                        sender.sendMessage(" - no changes");
                     } else {
-                        for (String change : changes) {
-                            sender.sendMessage(getRichMessage("diff-line", false, new HashMap<String, String>() {{
-                                put("change", change);
-                            }}));
+                        for (int i = from; i < to; i++) {
+                            sender.sendMessage(" " + (i + 1) + ". " + changes.get(i));
                         }
                     }
-
-                    sender.sendMessage(getRichMessage("diff-end", false));
-
                     break;
                 }
                 case "status": {

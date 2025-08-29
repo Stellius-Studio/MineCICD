@@ -28,6 +28,122 @@ import java.util.logging.Level;
 import static ml.konstanius.minecicd.MineCICD.log;
 
 public class WebhookHandler implements HttpHandler {
+    public static void simulatePushEvent() {
+        Bukkit.getScheduler().runTaskAsynchronously(MineCICD.plugin, () -> {
+            while (MineCICD.busyLock) {
+                try { Thread.sleep(100); } catch (InterruptedException e) { MineCICD.logError(e); }
+            }
+            String bar = MineCICD.addBarFor("webhook", Messages.getCleanMessage("bossbar-webhook-trigger", true), BarColor.BLUE, BarStyle.SOLID);
+            try (final Git git = Git.open(new File("."))) {
+                MineCICD.busyLock = true;
+                String oldHead = GitUtils.getCurrentRevision();
+                boolean updated = GitUtils.pullWithRetry();
+                if (!updated) {
+                    MineCICD.changeBar(bar, Messages.getCleanMessage("bossbar-webhook-no-changes", true), BarColor.GREEN, BarStyle.SOLID);
+                    MineCICD.removeBarFor(bar, "webhook");
+                    return;
+                }
+                String newHead = GitUtils.getCurrentRevision();
+
+                boolean allowIndividualReload = Config.getBoolean("webhooks.allow-individual-reload");
+                boolean allowGlobalReload = Config.getBoolean("webhooks.allow-global-reload");
+                boolean allowRestart = Config.getBoolean("webhooks.allow-restart");
+                boolean allowScripts = Config.getBoolean("webhooks.allow-scripts");
+
+                RevCommit latestCommit = git.log().setMaxCount(1).call().iterator().next();
+
+                String[] lines = latestCommit.getFullMessage().split("\n");
+                ArrayList<String> individualReload = new ArrayList<>();
+                ArrayList<String> commands = new ArrayList<>();
+                ArrayList<String> scripts = new ArrayList<>();
+                boolean globalReload = false;
+                boolean restart = false;
+                for (String line : lines) {
+                    if (line.startsWith("CICD")) {
+                        String command = line.substring(4).trim();
+                        if (command.startsWith("reload") && allowIndividualReload) {
+                            String plugin = command.substring(7).trim();
+                            individualReload.add(plugin);
+                        } else if (command.equals("global-reload")) {
+                            globalReload = allowGlobalReload;
+                        } else if (command.equals("restart")) {
+                            restart = allowRestart;
+                        } else if (command.startsWith("run")) {
+                            String cmd = command.substring(4).trim();
+                            commands.add(cmd);
+                        } else if (command.startsWith("script")) {
+                            String script = command.substring(7).trim();
+                            scripts.add(script);
+                        } else {
+                            MineCICD.log("Unknown command in CICD commit message " + command, Level.WARNING);
+                        }
+                    }
+                }
+
+                ObjectId oldHeadId = git.getRepository().resolve(oldHead);
+                ObjectId newHeadId = git.getRepository().resolve(newHead);
+                List<DiffEntry> diffs = GitUtils.getChangesBetween(git, oldHeadId, newHeadId);
+                StringBuilder changesBuilder = new StringBuilder();
+                for (DiffEntry diff : diffs) {
+                    DiffEntry.ChangeType type = diff.getChangeType();
+                    String path = diff.getNewPath();
+                    switch (type) {
+                        case ADD: changesBuilder.append("&a+ ").append(path).append("\n"); break;
+                        case DELETE: changesBuilder.append("&c- ").append(path).append("\n"); break;
+                        case MODIFY: changesBuilder.append("&b# ").append(path).append("\n"); break;
+                        case COPY:
+                        case RENAME:
+                            break;
+                    }
+                }
+                String changes = changesBuilder.toString();
+                if (changes.isEmpty()) { changes = "&7No changes"; } else { changes = changes.substring(0, changes.length() - 1); }
+
+                PersonIdent author = latestCommit.getAuthorIdent();
+                String name = author.getName();
+                java.util.Date cal = author.getWhen();
+                String commitMsg = latestCommit.getFullMessage().trim();
+                if (commitMsg.endsWith("\n")) commitMsg = commitMsg.substring(0, commitMsg.length() - 1);
+                String finalCommitMsg = commitMsg;
+                String finalChanges = changes;
+                net.md_5.bungee.api.chat.BaseComponent[] components = Messages.messageToComponent(
+                        Messages.getMessage("webhook-event", false, new java.util.HashMap<String, String>() {{
+                            put("author", name);
+                            put("date", new java.text.SimpleDateFormat("dd.MM.yyyy HH:mm:ss").format(cal));
+                            put("message", finalCommitMsg);
+                            put("changes", finalChanges);
+                        }})
+                );
+                for (org.bukkit.entity.Player p : Bukkit.getOnlinePlayers()) {
+                    if (p.hasPermission("minecicd.notify")) {
+                        try { p.sendMessage(components); } catch (Exception e) { MineCICD.logError(e); }
+                    }
+                }
+                for (String cmd : commands) {
+                    try { Bukkit.getScheduler().runTask(MineCICD.plugin, () -> Bukkit.dispatchCommand(Bukkit.getConsoleSender(), cmd)); } catch (Exception e) { MineCICD.logError(e); }
+                }
+                if (allowScripts) {
+                    for (String script : scripts) {
+                        try { Script.run(script); } catch (Exception e) { MineCICD.logError(e); }
+                    }
+                }
+                if (restart) {
+                    Bukkit.shutdown();
+                } else if (globalReload) {
+                    Bukkit.reload();
+                }
+                MineCICD.changeBar(bar, Messages.getCleanMessage("bossbar-webhook-success", true), BarColor.GREEN, BarStyle.SOLID);
+                MineCICD.removeBar(bar, Config.getInt("bossbar.duration"));
+            } catch (Exception e) {
+                MineCICD.logError(e);
+                MineCICD.changeBar(bar, Messages.getCleanMessage("bossbar-webhook-failed", true), BarColor.RED, BarStyle.SEGMENTED_12);
+                MineCICD.removeBar(bar, Config.getInt("bossbar.duration"));
+            } finally {
+                MineCICD.busyLock = false;
+            }
+        });
+    }
+
     @Override
     public void handle(HttpExchange t) throws IOException {
         try (final Git git = Git.open(new File("."))) {
@@ -69,7 +185,7 @@ public class WebhookHandler implements HttpHandler {
                     }
                 }
 
-                String bar = MineCICD.addBar(Messages.getCleanMessage("bossbar-webhook-trigger", true), BarColor.BLUE, BarStyle.SOLID);
+                String bar = MineCICD.addBarFor("webhook", Messages.getCleanMessage("bossbar-webhook-trigger", true), BarColor.BLUE, BarStyle.SOLID);
                 try {
                     MineCICD.busyLock = true;
 
