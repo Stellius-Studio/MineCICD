@@ -29,7 +29,7 @@ import java.util.Objects;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
-public final class MineCICD extends JavaPlugin {
+public final class MineCICD extends JavaPlugin implements org.bukkit.event.Listener {
     // Metrics for observability
     public static class Metrics {
         public long pulls = 0;
@@ -80,6 +80,19 @@ public final class MineCICD extends JavaPlugin {
     public static HashMap<String, BossBar> busyBars = new HashMap<>();
     public static boolean busyLock = false;
 
+        // Pending updates state (set by Webhook when require-confirm is true)
+        public static class PendingUpdate {
+            public String author;
+            public String date;
+            public String message;
+            public String changes;
+            public long createdAt;
+        }
+        private static volatile PendingUpdate pendingUpdate;
+        public static synchronized void setPendingUpdate(PendingUpdate p) { pendingUpdate = p; }
+        public static synchronized PendingUpdate getPendingUpdate() { return pendingUpdate; }
+        public static synchronized void clearPendingUpdate() { pendingUpdate = null; }
+
     @Override
     public void onEnable() {
         plugin = this;
@@ -128,6 +141,9 @@ public final class MineCICD extends JavaPlugin {
 
         Objects.requireNonNull(this.getCommand("minecicd")).setExecutor(new BaseCommand());
         Objects.requireNonNull(this.getCommand("minecicd")).setTabCompleter(new BaseCommandTabCompleter());
+
+        // Register event listener for login reminders
+        getServer().getPluginManager().registerEvents(this, this);
 
         try (Git ignored = Git.open(new File("."))) {
         } catch (Exception ignored) {
@@ -315,6 +331,40 @@ public final class MineCICD extends JavaPlugin {
             stagedJarUnload.clear();
             stagedJarLoad.clear();
         }
+    }
+
+    @org.bukkit.event.EventHandler
+    public void onJoin(org.bukkit.event.player.PlayerJoinEvent e) {
+        try {
+            PendingUpdate pu = getPendingUpdate();
+            if (pu != null) {
+                org.bukkit.entity.Player p = e.getPlayer();
+                if (p != null && p.hasPermission("minecicd.notify")) {
+                    p.sendMessage(Messages.getRichMessage("pending-on-join", false));
+                }
+            }
+        } catch (Exception ex) { logError(ex); }
+    }
+
+    public static void queueRestartIfConfigured() {
+        boolean enabled = false;
+        try { enabled = Config.getBoolean("post-pull.queue-restart"); } catch (Exception ignored) {}
+        if (!enabled) return;
+        int seconds = 0;
+        try { seconds = Config.getInt("post-pull.delay-seconds"); } catch (Exception ignored) {}
+        if (seconds < 0) seconds = 0;
+        final int secFinal = seconds;
+        try {
+            // Notify admins and console
+            try { Bukkit.getConsoleSender().sendMessage("[MineCICD] Queued server restart in " + secFinal + "s (post-pull setting)."); } catch (Exception ignored) {}
+            for (org.bukkit.entity.Player p : Bukkit.getOnlinePlayers()) {
+                if (p.hasPermission("minecicd.notify")) {
+                    try { p.sendMessage(Messages.getRichMessage("restart-queued", false, new java.util.HashMap<String, String>() {{ put("seconds", String.valueOf(secFinal)); }})); } catch (Exception e) { logError(e); }
+                }
+            }
+            long ticks = Math.max(1L, secFinal * 20L);
+            Bukkit.getScheduler().runTaskLater(MineCICD.plugin, Bukkit::shutdown, ticks);
+        } catch (Exception e) { logError(e); }
     }
 
     public static void setupAutomation() {

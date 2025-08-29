@@ -20,6 +20,10 @@ push-usage: "&cInvalid arguments. Usage: /{label} push <commit message>"
 push-failed: "&cError pushing repo: {error}"
 push-success: "&aRepo changes pushed successfully."
 
+ready-usage: "&cInvalid arguments. Usage: /{label} ready [targetBranch]"
+ready-success: "&aMarked this branch as ready to merge into &b{target}&a and pushed marker."
+ready-failed: "&cError marking ready: {error}"
+
 add-usage: "&cInvalid arguments. Usage: /{label} add <file / 'directory/'> (trailing slash is required for directories)"
 add-failed: "&cError adding file(s): {error}"
 add-success: "&aAdded {amount} new file(s) to Git tracking."
@@ -80,6 +84,8 @@ help:
   - "&a/{label} status &7- &bShows the current status of the plugin, repository, Webhook listener, and changes."
   - "&a/{label} resolve <merge-abort / repo-reset / reset-local-changes> &7- &bResolves conflicts by either aborting the merge, resetting the repository, or removing local changes."
   - "&a/{label} diff <local / remote> &7- &bShows uncommited changes (local) or unpulled changes on the remote branch (remote)."
+  - "&a/{label} ready [targetBranch] &7- &bFlags the current branch as ready to merge into target (default: main) and pushes a marker."
+  - "&a/{label} accept &7- &bAccept and apply pending updates announced by webhook (if confirm mode is enabled)."
   - "&a/{label} reload &7- &bReloads the plugin configuration and webhook webserver."
   - "&a/{label} help &7- &bShows this help message."
 
@@ -157,3 +163,16 @@ webhook-event:
   - "&7=========== &aChanges&7 ==========="
   - "&7{changes}"
   - "&7==============================="
+
+
+# Pending updates workflow
+pending-on-join: "&eThere are new commits available for this server. Use &b/minecicd accept &eto apply them."
+accept-usage: "&cInvalid arguments. Usage: /{label} accept"
+accept-none: "&aNo pending updates to apply."
+accept-success: "&aAccepted pending updates and applied changes."
+accept-failed: "&cFailed to accept updates: {error}"
+webhook-pending-extra: "&e(confirmation required) Use &b/minecicd accept &eto apply these changes."
+
+
+# Post-pull restart queue
+restart-queued: "&eServer restart queued in &b{seconds}s &e(post-pull setting)."

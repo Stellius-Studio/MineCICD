@@ -28,11 +28,25 @@ import java.util.logging.Level;
 import static ml.konstanius.minecicd.MineCICD.log;
 
 public class WebhookHandler implements HttpHandler {
+    private static volatile long lastWebhookAt = 0L;
+    public static synchronized boolean shouldSkipDueToDebounce(long now, long minIntervalMs) {
+        if (minIntervalMs <= 0) {
+            lastWebhookAt = now;
+            return false;
+        }
+        if (now - lastWebhookAt < minIntervalMs) {
+            return true;
+        }
+        lastWebhookAt = now;
+        return false;
+    }
     public static void simulatePushEvent() {
         Bukkit.getScheduler().runTaskAsynchronously(MineCICD.plugin, () -> {
             while (MineCICD.busyLock) {
                 try { Thread.sleep(100); } catch (InterruptedException e) { MineCICD.logError(e); }
             }
+            // Clear any pending flag now that we are applying it
+            try { MineCICD.clearPendingUpdate(); } catch (Exception ignored) {}
             String bar = MineCICD.addBarFor("webhook", Messages.getCleanMessage("bossbar-webhook-trigger", true), BarColor.BLUE, BarStyle.SOLID);
             try (final Git git = Git.open(new File("."))) {
                 MineCICD.busyLock = true;
@@ -173,6 +187,81 @@ public class WebhookHandler implements HttpHandler {
             String branch = git.getRepository().getBranch();
             if (!json.getString("ref").equals("refs/heads/" + branch)) {
                 log("Webhook received for branch " + json.getString("ref") + " but expected refs/heads/" + branch, Level.INFO);
+                return;
+            }
+
+            // Debounce webhook events to avoid frequent expensive pulls
+            long now = System.currentTimeMillis();
+            long minInterval = 0;
+            try { minInterval = Config.getInt("webhooks.min-interval-ms"); } catch (Exception ignored) {}
+            if (minInterval < 0) minInterval = 0;
+            if (WebhookHandler.shouldSkipDueToDebounce(now, minInterval)) {
+                log("Webhook skipped due to debounce (min-interval-ms=" + minInterval + ")", Level.INFO);
+                return;
+            }
+
+            // If require-confirm is enabled, only notify and set pending state (no auto-pull)
+            boolean requireConfirm = false;
+            try { requireConfirm = Config.getBoolean("webhooks.require-confirm"); } catch (Exception ignored) {}
+            if (requireConfirm) {
+                try (Git git2 = Git.open(new File("."))) {
+                    // Fetch and compare HEAD vs origin/branch
+                    List<DiffEntry> diffs = GitUtils.getRemoteChanges(git2);
+                    if (diffs == null || diffs.isEmpty()) {
+                        log("Webhook (confirm mode): no remote changes.", Level.INFO);
+                    } else {
+                        StringBuilder changesBuilder = new StringBuilder();
+                        for (DiffEntry diff : diffs) {
+                            DiffEntry.ChangeType type = diff.getChangeType();
+                            String path2 = diff.getNewPath();
+                            switch (type) {
+                                case ADD: changesBuilder.append("&a+ ").append(path2).append("\n"); break;
+                                case DELETE: changesBuilder.append("&c- ").append(path2).append("\n"); break;
+                                case MODIFY: changesBuilder.append("&b# ").append(path2).append("\n"); break;
+                                case COPY:
+                                case RENAME:
+                                    break;
+                            }
+                        }
+                        String changes = changesBuilder.toString();
+                        if (changes.isEmpty()) changes = "&7No changes"; else changes = changes.substring(0, changes.length()-1);
+
+                        RevCommit latest = git2.log().setMaxCount(1).add(git2.getRepository().resolve("origin/" + branch)).call().iterator().next();
+                        PersonIdent author = latest.getAuthorIdent();
+                        String name = author.getName();
+                        Date cal = author.getWhen();
+                        String commitMsg = latest.getFullMessage().trim();
+                        if (commitMsg.endsWith("\n")) commitMsg = commitMsg.substring(0, commitMsg.length() - 1);
+
+                        String finalCommitMsg = commitMsg;
+                        String finalChanges = changes;
+                        String rawMsg = Messages.getMessage("webhook-event", false, new HashMap<String, String>() {{
+                            put("author", name);
+                            put("date", new java.text.SimpleDateFormat("dd.MM.yyyy HH:mm:ss").format(cal));
+                            put("message", finalCommitMsg);
+                            put("changes", finalChanges);
+                        }});
+
+                        // Set pending state
+                        MineCICD.PendingUpdate pu = new MineCICD.PendingUpdate();
+                        pu.author = name;
+                        pu.date = new java.text.SimpleDateFormat("dd.MM.yyyy HH:mm:ss").format(cal);
+                        pu.message = finalCommitMsg;
+                        pu.changes = finalChanges;
+                        pu.createdAt = System.currentTimeMillis();
+                        MineCICD.setPendingUpdate(pu);
+
+                        BaseComponent[] components = Messages.messageToComponent(rawMsg);
+                        for (Player p : Bukkit.getOnlinePlayers()) {
+                            if (p.hasPermission("minecicd.notify")) {
+                                try { p.sendMessage(components); } catch (Exception e) { MineCICD.logError(e); }
+                                try { p.sendMessage(Messages.messageToComponent(Messages.getMessage("webhook-pending-extra", false))); } catch (Exception e) { MineCICD.logError(e); }
+                            }
+                        }
+                        // Console info
+                        Bukkit.getConsoleSender().sendMessage("[MineCICD] New commits available (confirmation required). Use /minecicd accept to apply.");
+                    }
+                } catch (Exception e) { MineCICD.logError(e); }
                 return;
             }
 

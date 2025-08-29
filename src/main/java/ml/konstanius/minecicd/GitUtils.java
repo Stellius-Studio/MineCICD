@@ -540,6 +540,11 @@ public abstract class GitUtils {
             }
             MineCICD.removeBarFor(bar, "pull");
             success = true;
+            try {
+                if (changes) {
+                    MineCICD.queueRestartIfConfigured();
+                }
+            } catch (Exception ignored) {}
             return changes;
         } catch (Exception e) {
             if (!(e instanceof IllegalStateException)) {
@@ -715,6 +720,62 @@ public abstract class GitUtils {
                 MineCICD.changeBar(bar, getCleanMessage("bossbar-push-failed", true), BarColor.RED, BarStyle.SEGMENTED_12);
                 MineCICD.removeBarFor(bar, "push");
             }
+            throw e;
+        } finally {
+            try {
+                long durMs = (System.nanoTime() - startNs) / 1_000_000L;
+                MineCICD.metrics.pushDurationMsTotal += durMs;
+                if (success) MineCICD.metrics.pushes++; else MineCICD.metrics.pushFailures++;
+            } catch (Exception ignored) {}
+            if (ownsBusy) busyLock = false;
+        }
+    }
+
+    public static void markReadyToMerge(String targetBranch, String author) throws Exception {
+        if (!activeRepoExists()) {
+            throw new IllegalStateException("Repository has to be pulled (cloned) before marking ready.");
+        }
+        boolean ownsBusy = !busyLock;
+        if (ownsBusy) busyLock = true;
+        String bar = MineCICD.addBarFor("push", getCleanMessage("bossbar-pushing", true), BarColor.BLUE, BarStyle.SOLID);
+        long startNs = System.nanoTime();
+        boolean success = false;
+        try (Git git = Git.open(new File("."))) {
+            // Ensure marker directory exists
+            File dir = new File(".minecicd");
+            if (!dir.exists() && !dir.mkdirs()) {
+                throw new IOException("Failed to create .minecicd directory");
+            }
+            File marker = new File(dir, "ready-to-merge.json");
+            String branch;
+            try {
+                branch = git.getRepository().getBranch();
+            } catch (Exception e) {
+                branch = Config.getString("git.branch");
+            }
+            final String currentBranch = branch;
+            final String target = (targetBranch == null || targetBranch.isEmpty()) ? "main" : targetBranch;
+            org.json.JSONObject jo = new org.json.JSONObject();
+            jo.put("branch", currentBranch);
+            jo.put("target", target);
+            jo.put("author", author);
+            jo.put("timestamp", new java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssXXX").format(new java.util.Date()));
+            String json = jo.toString(2);
+            java.nio.file.Files.write(marker.toPath(), json.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+
+            git.add().addFilepattern(".minecicd/ready-to-merge.json").call();
+            String msg = "CICD ready-to-merge " + (((targetBranch == null || targetBranch.isEmpty()) ? "main" : targetBranch));
+            RevCommit commit = git.commit().setAll(true).setAuthor(author, author).setMessage(msg).call();
+            git.push().add(commit.getName()).setCredentialsProvider(getCredentials()).call();
+
+            MineCICD.changeBar(bar, getCleanMessage("bossbar-pushed", true), BarColor.GREEN, BarStyle.SOLID);
+            MineCICD.removeBarFor(bar, "push");
+            success = true;
+        } catch (Exception e) {
+            MineCICD.log("Failed to mark ready-to-merge", Level.SEVERE);
+            MineCICD.logError(e);
+            MineCICD.changeBar(bar, getCleanMessage("bossbar-push-failed", true), BarColor.RED, BarStyle.SEGMENTED_12);
+            MineCICD.removeBarFor(bar, "push");
             throw e;
         } finally {
             try {

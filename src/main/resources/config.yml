@@ -63,11 +63,22 @@ webhooks:
   #   - restart
   #   - global reload
   #   - individual reload
+  # Minimum time between webhook-triggered pulls in milliseconds (debounce)
+  min-interval-ms: 2000
   allow-commands: true # This allows to execute arbitrary commands on the server, it is recommended to disable this on production servers
   allow-scripts: true # This allows to execute arbitrary CICD scripts on the server, it is recommended to disable this on production servers
   allow-individual-reload: true # This might not work with all plugins, issues will be displayed in the console. It is recommended to disable this on production servers
   allow-global-reload: false # This is highly discouraged, as it can cause issues with many plugins
   allow-restart: true
+  # When true, webhook will not auto-pull on new commits; it will notify admins and require
+  # a manual confirmation command (/minecicd accept) to apply the changes.
+  require-confirm: false
+
+post-pull:
+  # If true, queue a server restart after any successful pull that applied changes
+  queue-restart: false
+  # Delay in seconds before the queued restart is executed (0 = immediate next tick)
+  delay-seconds: 0
 
 automation:
   pull:

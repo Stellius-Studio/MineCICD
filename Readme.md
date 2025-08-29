@@ -84,6 +84,56 @@ Tip: Use `/minecicd branches` to see your current branch and ahead/behind counts
 
 Tip: You can simulate a webhook push without any network by running `/minecicd webhook test`. This will fetch, apply changes (if any), parse CICD commit directives, and run allowed actions, just like a real webhook.
 
+### Webhook debounce (gentle auto-pulls)
+To avoid overloading your server when multiple commits arrive in quick succession, MineCICD can debounce webhook-triggered pulls.
+Configure the minimum interval between webhook pulls in milliseconds:
+
+```yaml
+webhooks:
+  # Minimum time between webhook-triggered pulls in milliseconds (debounce)
+  min-interval-ms: 2000
+```
+
+- Set to 0 to disable debouncing (every webhook event triggers a pull check).
+- Increase the value if your repos see bursty commits or CI bots push multiple times in a row.
+
+### Confirm before pulling (manual acceptance)
+If you prefer to review incoming changes before they are applied, enable confirmation mode:
+
+### Post-pull automatic restart (optional)
+You can configure MineCICD to queue a server restart automatically after any successful pull that applied changes.
+
+Add the following to your config.yml (defaults shown):
+
+```yaml
+post-pull:
+  # If true, queue a server restart after any successful pull that applied changes
+  queue-restart: false
+  # Delay in seconds before the queued restart is executed (0 = immediate next tick)
+  delay-seconds: 0
+```
+
+Behavior:
+- Applies to manual pulls (`/minecicd pull`), webhook-triggered pulls, and scheduled automation pulls.
+- The restart is queued only when the pull actually applied changes (no restart for no-op pulls).
+- If a commit message also requests `CICD restart`, the immediate restart will occur; the queued restart will not fire after a shutdown.
+- Admins (permission `minecicd.notify`) and console receive a message announcing the queued restart and delay.
+
+```yaml
+webhooks:
+  # When true, MineCICD will announce new commits but not auto-pull them.
+  # Admins can apply pending updates with /minecicd accept
+  require-confirm: true
+```
+
+Behavior:
+- On new commits, MineCICD will not auto-pull. It fetches remote changes and announces details to online admins and the console.
+- The update is stored as pending; admins with permission `minecicd.notify` also receive a reminder on login.
+- Apply the update when ready with `/minecicd accept`.
+
+Notes:
+- This works alongside debounce (`webhooks.min-interval-ms`). Debounce controls how often MineCICD evaluates/announces new commits; `require-confirm` controls whether it auto-applies them.
+
 ### Commit Actions
 Commit Actions are actions that are performed when a commit is pushed to the repository.<br>
 They can range from restarting / reloading the server or individual plugins to executing game commands or
@@ -100,6 +150,26 @@ CICD run <command> (Multiple commands via separate lines can be specified)
 CICD script <script-name> (Multiple scripts via separate lines can be specified)
 <...>
 ```
+
+### Ready-to-merge marker
+Use `/minecicd ready [targetBranch]` to flag the current branch as ready to be merged into a target branch (default: `main`).
+This creates or updates a marker file and pushes it to your repository, which also triggers the normal webhook flow on downstream servers.
+
+- Command examples:
+  - `/minecicd ready` → marks as ready to merge into `main`.
+  - `/minecicd ready develop` → marks as ready to merge into `develop`.
+
+- What gets committed:
+  - A JSON marker at `.minecicd/ready-to-merge.json` with fields:
+    - `branch` – the current branch where you ran the command
+    - `target` – the branch you indicated (default `main`)
+    - `author` – command sender (player name or "Server Console")
+    - `timestamp` – ISO 8601 timestamp
+  - Commit message format: `CICD ready-to-merge <target>`
+
+- How downstreams react:
+  - Any server tracking this branch and receiving webhooks will gently pull the update (subject to `webhooks.min-interval-ms` debounce) as with any push.
+  - This does not automatically merge into the target; it signals readiness for your normal Git workflow (PRs, reviews, manual merges).
 
 ### Secrets
 Secrets are a way of storing sensitive information, such as passwords or API keys, in a dedicated, untracked file.<br>
@@ -284,6 +354,8 @@ Use the matrix below to diagnose common problems.
 - `minecicd status` - Shows the current status of the plugin, repository, Webhook listener, and changes.
 - `minecicd resolve <merge-abort / repo-reset / reset-local-changes>` - Resolves conflicts by either aborting the merge, resetting the repository, or removing local changes.
 - `minecicd diff <local|remote> [page] [pathPrefix]` - Shows local or remote changes with optional pagination and path filtering.
+- `minecicd ready [targetBranch]` - Flags the current branch as ready to merge into target (default: `main`); creates and pushes a `.minecicd/ready-to-merge.json` marker.
+- `minecicd accept` - Applies pending updates announced by webhook when confirmation mode is enabled.
 - `minecicd reload` - Reloads the plugin configuration and webhook webserver.
 - `minecicd help` - Shows this help message.
 

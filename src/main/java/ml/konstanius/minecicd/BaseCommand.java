@@ -341,6 +341,45 @@ public class BaseCommand implements CommandExecutor {
                     }
                     break;
                 }
+                case "ready": {
+                    String target = "main";
+                    if (args.length >= 2) {
+                        target = args[1];
+                    }
+                    try {
+                        String author = (sender instanceof Player) ? sender.getName() : "Server Console";
+                        GitUtils.markReadyToMerge(target, author);
+                        String finalTarget = target;
+                        sender.sendMessage(getRichMessage("ready-success", true, new HashMap<String, String>() {{
+                            put("target", finalTarget);
+                        }}));
+                    } catch (Exception e) {
+                        MineCICD.logError(e);
+                        sender.sendMessage(getRichMessage("ready-failed", true, new HashMap<String, String>() {{
+                            put("error", e.getMessage());
+                        }}));
+                    }
+                    break;
+                }
+                case "accept": {
+                    // Manual confirmation to apply pending webhook changes
+                    try {
+                        if (MineCICD.getPendingUpdate() == null) {
+                            sender.sendMessage(getRichMessage("accept-none", true));
+                            return;
+                        }
+                        // Clear pending and trigger the usual webhook processing flow
+                        MineCICD.clearPendingUpdate();
+                        WebhookHandler.simulatePushEvent();
+                        sender.sendMessage(getRichMessage("accept-success", true));
+                    } catch (Exception e) {
+                        MineCICD.logError(e);
+                        sender.sendMessage(getRichMessage("accept-failed", true, new HashMap<String, String>() {{
+                            put("error", e.getMessage());
+                        }}));
+                    }
+                    break;
+                }
                 case "merge": {
                     if (args.length < 3 || args.length > 4) {
                         sender.sendMessage("Usage: /" + label + " merge <remote|url> <branch> [ours|theirs]");
