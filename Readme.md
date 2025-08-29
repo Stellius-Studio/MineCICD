@@ -135,6 +135,9 @@ This will unload and load plugins if their jarfiles change, are removed. or new 
 - `minecicd reload` - Reloads the plugin configuration and webhook webserver.
 - `minecicd help` - Shows this help message.
 
+## Roadmap & Ideas
+See ROADMAP.md for proposed features and enhancements that are open for community feedback and contributions.
+
 ## Permissions
 - `minecicd.<subcommand>` - Allows the user to use the subcommand
 - `minecicd.notify` - Allows the user to receive notifications from actions performed by MineCICD
