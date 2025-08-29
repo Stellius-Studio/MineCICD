@@ -5,10 +5,10 @@ This document collects feature ideas and enhancements discussed by users and mai
 Note: Items marked (idea) are proposals; they may change or be rejected after community discussion.
 
 ## 1. Git Workflow & Repository Management
-- Multi‑repo pull/merge (idea): Add a safe, read‑only command like `minecicd merge <remote> <branch> [ours|theirs]` to fetch and locally merge other repos/branches for server‑side composition. Rationale: compose core + gamemode configs. Feasibility: medium/high complexity; careful conflict handling and clear “never push merged externals” guarantees required.
-- Improve initial branch handling: Avoid creating/pushing a default `master` branch when a different branch is configured on first init. Rationale: reduce noise on fresh repos. Feasibility: low.
-- Branch listing + info: `minecicd branches` to show local/remote branches, current branch, ahead/behind counts. Rationale: better visibility. Feasibility: low.
-- Protected branch safety: Optional setting to block `push` on protected branches or require `--force` flag. Feasibility: low/medium.
+- [x] Multi‑repo pull/merge: Added safe, read‑only command `minecicd merge <remote|url> <branch> [ours|theirs]` that fetches and merges without auto‑commit; push is blocked by a local marker unless forced.
+- [x] Improve initial branch handling: On first init we check out/create the configured branch before the initial commit/push, avoiding accidental `master` creation.
+- [x] Branch listing + info: Implemented `minecicd branches` showing local branches with current marker and ahead/behind vs origin.
+- [x] Protected branch safety: Configurable push protection via `git.protected-push-mode` and `git.protected-branches`; force override supported.
 
 ## 2. Secrets & Configuration
 - Secrets validation command: `minecicd secrets validate` to check placeholders exist in target files and report missing keys. Feasibility: low.

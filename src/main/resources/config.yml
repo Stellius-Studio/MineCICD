@@ -9,6 +9,10 @@ git:
   # Use this to set up development servers, production servers, and test servers and the like
   # This has an effect on everything from pushing, pulling, and webhooks
   branch: "master"
+  # Optional: protect pushes on critical branches. Modes: off | require-force | block
+  protected-push-mode: "off"
+  # Comma-separated list of protected branches (e.g., "main, master, production")
+  protected-branches: ""
 
 # Whether experimental jar unloading and loading should be enabled
 # This requires PlugManX to be installed and working on your server

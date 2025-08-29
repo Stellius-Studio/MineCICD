@@ -300,9 +300,22 @@ public abstract class GitUtils {
 
                     boolean newRepo = true;
                     if (git.branchList().call().stream().anyMatch(ref -> ref.getName().equals("refs/remotes/origin/" + branch))) {
+                        // Remote branch exists: align local to it and checkout before any commits
                         git.reset().setMode(ResetCommand.ResetType.HARD).setRef("origin/" + branch).call();
+                        // Ensure local branch exists
+                        try {
+                            git.branchCreate().setName(branch).call();
+                        } catch (RefAlreadyExistsException ignored) {
+                        }
                         git.checkout().setName(branch).call();
                         newRepo = false;
+                    } else {
+                        // Remote branch doesn't exist yet: create and checkout the configured branch locally BEFORE first commit
+                        try {
+                            git.branchCreate().setName(branch).call();
+                        } catch (RefAlreadyExistsException ignored) {
+                        }
+                        git.checkout().setName(branch).call();
                     }
 
                     // Re-configure secrets filters after potential reset/checkout (reset may have removed .gitattributes)
@@ -325,12 +338,8 @@ public abstract class GitUtils {
                     }
                     if (!getLocalChanges().isEmpty() || newRepo) {
                         git.commit().setAuthor("MineCICD", "MineCICD").setMessage("MineCICD initial setup commit").call();
+                        // Push current branch (already checked out to the configured branch)
                         git.push().setCredentialsProvider(getCredentials()).call();
-                        try {
-                            git.branchCreate().setName(branch).call();
-                        } catch (RefAlreadyExistsException ignored) {
-                        }
-                        git.checkout().setName(branch).call();
 
                         if (Config.getBoolean("experimental-jar-loading")) {
                             File pluginsFolder = new File(new File("."), "plugins");
@@ -564,6 +573,10 @@ public abstract class GitUtils {
     }
 
     public static void push(String message, String author) throws Exception {
+        push(message, author, false);
+    }
+
+    public static void push(String message, String author, boolean force) throws Exception {
         if (!activeRepoExists()) {
             throw new IllegalStateException("Repository has to be pulled (cloned) before changes can be pushed.");
         }
@@ -577,6 +590,35 @@ public abstract class GitUtils {
             // TODO check if all remote commits have been pulled first
 
             try (Git git = Git.open(new File("."))) {
+                // Safety: block push on protected branches depending on config
+                String mode = Optional.ofNullable(Config.getString("git.protected-push-mode")).orElse("off").trim().toLowerCase(Locale.ROOT);
+                String protectedCsv = Optional.ofNullable(Config.getString("git.protected-branches")).orElse("");
+                Set<String> protectedBranches = new HashSet<>();
+                for (String b : protectedCsv.split(",")) {
+                    if (!b.trim().isEmpty()) protectedBranches.add(b.trim());
+                }
+
+                String currentBranch;
+                try {
+                    currentBranch = git.getRepository().getBranch();
+                } catch (Exception ex) {
+                    currentBranch = Config.getString("git.branch");
+                }
+
+                // Merge-external safety marker
+                File marker = new File(".minecicd-merged-externals");
+                if (marker.exists() && !force) {
+                    throw new IllegalStateException("Push blocked: repository contains merged external changes. Use 'push force <message>' if you really intend to push.");
+                }
+
+                if (protectedBranches.contains(currentBranch)) {
+                    if ("block".equals(mode)) {
+                        throw new IllegalStateException("Push to protected branch '" + currentBranch + "' is blocked by configuration.");
+                    } else if ("require-force".equals(mode) && !force) {
+                        throw new IllegalStateException("Push to protected branch '" + currentBranch + "' requires --force (use 'push force <message>').");
+                    }
+                }
+
                 git.add().addFilepattern(".").call();
 
                 boolean changes = !getLocalChanges().isEmpty();
@@ -833,6 +875,11 @@ public abstract class GitUtils {
             repository.writeMergeHeads(null);
             git.reset().setMode(ResetCommand.ResetType.HARD).call();
         }
+        // Clear external-merge marker if present
+        File marker = new File(".minecicd-merged-externals");
+        if (marker.exists()) {
+            try { marker.delete(); } catch (Exception ignored) {}
+        }
     }
 
     public static void repoReset() {
@@ -850,6 +897,117 @@ public abstract class GitUtils {
             RevWalk walk = new RevWalk(git.getRepository());
             return walk.parseCommit(commitId);
         }
+    }
+
+    public static void mergeExternal(String remote, String branch, String preference) throws Exception {
+        if (!activeRepoExists()) {
+            throw new IllegalStateException("Repository has to be pulled (cloned) before merging externals.");
+        }
+        boolean ownsBusy = !busyLock;
+        if (ownsBusy) busyLock = true;
+
+        String bar = MineCICD.addBar("Merging external branch...", BarColor.BLUE, BarStyle.SOLID);
+        String tempRemote = null;
+        try (Git git = Git.open(new File("."))) {
+            if (!getLocalChanges().isEmpty()) {
+                throw new IllegalStateException("There are uncommitted changes. Push or reset local changes before merging.");
+            }
+
+            // Determine if 'remote' is an existing remote name or a URL
+            boolean existing = git.remoteList().call().stream().anyMatch(r -> r.getName().equals(remote));
+            String remoteName = remote;
+            if (!existing) {
+                // Try to treat as URL and add a temporary remote
+                try {
+                    new URIish(remote); // validate
+                } catch (Exception e) {
+                    throw new IllegalArgumentException("Remote '" + remote + "' is neither a known remote nor a valid URL");
+                }
+                remoteName = "external-" + System.currentTimeMillis();
+                tempRemote = remoteName;
+                git.remoteAdd().setName(remoteName).setUri(new URIish(remote)).call();
+            }
+
+            // Fetch the target branch
+            git.fetch().setRemote(remoteName).setCredentialsProvider(getCredentials()).call();
+
+            String remoteRef = "refs/remotes/" + remoteName + "/" + branch;
+            ObjectId target = git.getRepository().resolve(remoteRef);
+            if (target == null) {
+                throw new IllegalArgumentException("Branch '" + branch + "' not found on remote '" + remote + "'");
+            }
+
+            MergeStrategy strategy = MergeStrategy.RECURSIVE;
+            ContentMergeStrategy contentPref = null;
+            if (preference != null) {
+                if ("ours".equalsIgnoreCase(preference)) {
+                    strategy = MergeStrategy.OURS;
+                } else if ("theirs".equalsIgnoreCase(preference)) {
+                    strategy = MergeStrategy.THEIRS;
+                    contentPref = ContentMergeStrategy.THEIRS;
+                }
+            }
+
+            // Perform a non-committing merge (keeps changes in index/worktree)
+            org.eclipse.jgit.api.MergeCommand cmd = git.merge().include(target).setStrategy(strategy);
+            if (contentPref != null) cmd.setContentMergeStrategy(contentPref);
+            cmd.setCommit(false).call();
+
+            // Write marker to prevent accidental push of external merges
+            try { new File(".minecicd-merged-externals").createNewFile(); } catch (IOException ignored) {}
+
+            MineCICD.changeBar(bar, "Merged external branch into working tree (not committed).", BarColor.GREEN, BarStyle.SOLID);
+            MineCICD.removeBar(bar, Config.getInt("bossbar.duration"));
+        } catch (Exception e) {
+            if (!(e instanceof IllegalStateException)) {
+                MineCICD.changeBar(bar, "External merge failed", BarColor.RED, BarStyle.SEGMENTED_12);
+                MineCICD.removeBar(bar, Config.getInt("bossbar.duration"));
+                MineCICD.logError(e);
+            }
+            throw e;
+        } finally {
+            // Clean up temp remote if added
+            try (Git git = Git.open(new File("."))) {
+                if (tempRemote != null) {
+                    try {
+                        org.eclipse.jgit.api.RemoteRemoveCommand rr = git.remoteRemove();
+                        rr.setName(tempRemote);
+                        rr.call();
+                    } catch (Exception ignored) {}
+                }
+            } catch (Exception ignored) {}
+            if (ownsBusy) busyLock = false;
+        }
+    }
+
+    public static List<String> getBranchesInfo() throws Exception {
+        if (!activeRepoExists()) return Collections.emptyList();
+        List<String> lines = new ArrayList<>();
+        try (Git git = Git.open(new File("."))) {
+            // Fetch to update remotes
+            try { git.fetch().setCredentialsProvider(getCredentials()).call(); } catch (Exception ignored) {}
+            String current = "";
+            try { current = git.getRepository().getBranch(); } catch (Exception ignored) {}
+
+            List<org.eclipse.jgit.lib.Ref> locals = git.branchList().call();
+            for (org.eclipse.jgit.lib.Ref ref : locals) {
+                String name = ref.getName().replace("refs/heads/", "");
+                String remoteRef = "refs/remotes/origin/" + name;
+                ObjectId localId = git.getRepository().resolve(ref.getName());
+                ObjectId remoteId = git.getRepository().resolve(remoteRef);
+                int ahead = 0;
+                int behind = 0;
+                if (localId != null && remoteId != null) {
+                    Iterable<RevCommit> aheadCommits = git.log().add(localId).not(remoteId).call();
+                    for (RevCommit ignored : aheadCommits) ahead++;
+                    Iterable<RevCommit> behindCommits = git.log().add(remoteId).not(localId).call();
+                    for (RevCommit ignored : behindCommits) behind++;
+                }
+                String mark = name.equals(current) ? "*" : " ";
+                lines.add(String.format("%s %s (ahead %d, behind %d)%s", mark, name, ahead, behind, remoteId == null ? " [no remote]" : ""));
+            }
+        }
+        return lines;
     }
 
     public static void setBranchIfInited() throws IOException, GitAPIException {

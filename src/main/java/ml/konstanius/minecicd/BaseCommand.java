@@ -258,7 +258,20 @@ public class BaseCommand implements CommandExecutor {
                         return;
                     }
 
-                    String message = String.join(" ", args).substring(args[0].length() + 1);
+                    boolean force = false;
+                    int msgStart = 1;
+                    if (args[1].equalsIgnoreCase("force")) {
+                        force = true;
+                        if (args.length < 3) {
+                            sender.sendMessage(getRichMessage("push-usage", true, new HashMap<String, String>() {{
+                                put("label", label);
+                            }}));
+                            return;
+                        }
+                        msgStart = 2;
+                    }
+
+                    String message = String.join(" ", Arrays.copyOfRange(args, msgStart, args.length));
                     String author;
                     if (sender instanceof Player) {
                         author = sender.getName();
@@ -267,7 +280,7 @@ public class BaseCommand implements CommandExecutor {
                     }
 
                     try {
-                        GitUtils.push(message, author);
+                        GitUtils.push(message, author, force);
                     } catch (Exception e) {
                         MineCICD.logError(e);
                         sender.sendMessage(getRichMessage("push-failed", true, new HashMap<String, String>() {{
@@ -277,6 +290,38 @@ public class BaseCommand implements CommandExecutor {
                     }
 
                     sender.sendMessage(getRichMessage("push-success", true));
+                    break;
+                }
+                case "branches": {
+                    try {
+                        List<String> lines = GitUtils.getBranchesInfo();
+                        if (lines.isEmpty()) {
+                            sender.sendMessage("No repository initialized.");
+                        } else {
+                            sender.sendMessage("Branches ( * = current ):");
+                            for (String l : lines) sender.sendMessage(l);
+                        }
+                    } catch (Exception e) {
+                        MineCICD.logError(e);
+                        sender.sendMessage("Failed to list branches: " + e.getMessage());
+                    }
+                    break;
+                }
+                case "merge": {
+                    if (args.length < 3 || args.length > 4) {
+                        sender.sendMessage("Usage: /" + label + " merge <remote|url> <branch> [ours|theirs]");
+                        return;
+                    }
+                    String remote = args[1];
+                    String branch = args[2];
+                    String pref = args.length == 4 ? args[3] : null;
+                    try {
+                        GitUtils.mergeExternal(remote, branch, pref);
+                        sender.sendMessage("External merge applied to working tree. Review changes and push only if appropriate.");
+                    } catch (Exception e) {
+                        MineCICD.logError(e);
+                        sender.sendMessage("Merge failed: " + e.getMessage());
+                    }
                     break;
                 }
                 case "reset": {
