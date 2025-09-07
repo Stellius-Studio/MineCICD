@@ -11,7 +11,6 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.util.HashMap;
 import java.util.List;
-import java.util.Objects;
 import java.util.Scanner;
 import java.util.logging.Level;
 
@@ -25,13 +24,31 @@ public abstract class Script {
         if (exampleScriptFile.exists()) return;
         exampleScriptFile.getParentFile().mkdirs();
 
-        InputStreamReader reader = new InputStreamReader(Objects.requireNonNull(MineCICD.plugin.getResource("example_script.sh")), StandardCharsets.UTF_8);
-
-        Scanner scanner = new Scanner(reader);
         try {
-            Files.write(exampleScriptFile.toPath(), scanner.useDelimiter("\\A").next().getBytes());
+            // Try to load from resource first
+            java.io.InputStream resourceStream = MineCICD.plugin.getResource("example_script.sh");
+            
+            if (resourceStream != null) {
+                // Use the resource if it exists
+                InputStreamReader reader = new InputStreamReader(resourceStream, StandardCharsets.UTF_8);
+                Scanner scanner = new Scanner(reader);
+                Files.write(exampleScriptFile.toPath(), scanner.useDelimiter("\\A").next().getBytes());
+                scanner.close();
+            } else {
+                // Create a default example script if resource not found
+                String defaultScript = "#!/bin/bash\n" +
+                        "# This is an example script for MineCICD\n" +
+                        "# Lines starting with # are comments\n" +
+                        "# Lines starting with ! are executed as shell commands\n" +
+                        "# Other lines are executed as Minecraft commands\n\n" +
+                        "say Hello from MineCICD script!\n" +
+                        "# ! echo \"Hello from shell command!\"\n";
+                
+                Files.write(exampleScriptFile.toPath(), defaultScript.getBytes(StandardCharsets.UTF_8));
+                MineCICD.log("Created default example script", Level.INFO);
+            }
         } catch (IOException e) {
-            MineCICD.log("Failed to write example_script.txt", Level.SEVERE);
+            MineCICD.log("Failed to write example_script.sh", Level.SEVERE);
             MineCICD.logError(e);
         }
     }

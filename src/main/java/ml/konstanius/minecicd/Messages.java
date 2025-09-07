@@ -15,7 +15,6 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Map;
-import java.util.Objects;
 import java.util.logging.Level;
 
 public abstract class Messages {
@@ -195,11 +194,28 @@ public abstract class Messages {
         try {
             messages.clear();
             YamlConfiguration pluginMessagesResource = new YamlConfiguration();
-            pluginMessagesResource.load(new InputStreamReader(Objects.requireNonNull(MineCICD.plugin.getResource("messages.yml")), StandardCharsets.UTF_8));
+            
+            java.io.InputStream resourceStream = MineCICD.plugin.getResource("messages.yml");
+            if (resourceStream != null) {
+                pluginMessagesResource.load(new InputStreamReader(resourceStream, StandardCharsets.UTF_8));
+            } else {
+                // If resource not found in JAR, create default messages
+                MineCICD.log("messages.yml not found in plugin JAR, creating default messages", Level.WARNING);
+                // Add some basic default messages
+                pluginMessagesResource.set("prefix", "&8[&bMineCICD&8] &7");
+                pluginMessagesResource.set("error", "&cAn error occurred: &7{error}");
+            }
 
             File pluginMessagesFile = new File(MineCICD.plugin.getDataFolder().getAbsolutePath(), "messages.yml");
             if (!pluginMessagesFile.exists()) {
-                MineCICD.plugin.saveResource("messages.yml", false);
+                if (resourceStream != null) {
+                    MineCICD.plugin.saveResource("messages.yml", false);
+                } else {
+                    // Create directory if it doesn't exist
+                    pluginMessagesFile.getParentFile().mkdirs();
+                    // Save our default messages
+                    pluginMessagesResource.save(pluginMessagesFile);
+                }
             }
 
             FileConfiguration messagesConfig = new YamlConfiguration();

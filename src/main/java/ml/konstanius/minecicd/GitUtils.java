@@ -44,6 +44,16 @@ import static ml.konstanius.minecicd.Messages.getCleanMessage;
 import static ml.konstanius.minecicd.MineCICD.busyLock;
 
 public abstract class GitUtils {
+    // Utility method to safely get first commit name from iterator, preventing NPEs
+    private static String safeGetFirstCommitName(java.util.Iterator<RevCommit> commits) {
+        if (commits != null && commits.hasNext()) {
+            RevCommit commit = commits.next();
+            if (commit != null) {
+                return commit.getName();
+            }
+        }
+        return "";
+    }
     // Determine plugin name from a jar (plugin.yml) or from path/file name as fallback
     public static String detectPluginName(String pathOrFile) {
         try {
@@ -154,11 +164,32 @@ public abstract class GitUtils {
         File gitIgnoreFile = new File(new File("."), ".gitignore");
         if (gitIgnoreFile.exists()) return;
 
-        InputStreamReader reader = new InputStreamReader(Objects.requireNonNull(MineCICD.plugin.getResource(".gitignore")), StandardCharsets.UTF_8);
-
-        Scanner scanner = new Scanner(reader);
         try {
-            Files.write(gitIgnoreFile.toPath(), scanner.useDelimiter("\\A").next().getBytes());
+            // Try to load from resource first
+            java.io.InputStream resourceStream = MineCICD.plugin.getResource(".gitignore");
+            
+            if (resourceStream != null) {
+                // Use the resource if it exists
+                InputStreamReader reader = new InputStreamReader(resourceStream, StandardCharsets.UTF_8);
+                Scanner scanner = new Scanner(reader);
+                Files.write(gitIgnoreFile.toPath(), scanner.useDelimiter("\\A").next().getBytes());
+                scanner.close();
+            } else {
+                // Create a default .gitignore if resource not found
+                String defaultGitIgnore = "# MineCICD Default .gitignore\n" +
+                        "# MineCICD GITIGNORE PART BEGIN MARKER\n" +
+                        "# This section is managed by MineCICD\n" +
+                        "# MineCICD GITIGNORE PART END MARKER\n" +
+                        "\n" +
+                        "# Minecraft Server Files\n" +
+                        "*.log\n" +
+                        "logs/\n" +
+                        "cache/\n" +
+                        "crash-reports/\n" +
+                        "*.dat\n";
+                Files.write(gitIgnoreFile.toPath(), defaultGitIgnore.getBytes(StandardCharsets.UTF_8));
+                MineCICD.log("Created default .gitignore file", Level.INFO);
+            }
         } catch (IOException e) {
             MineCICD.log("Failed to write .gitignore", Level.SEVERE);
             MineCICD.logError(e);
@@ -305,7 +336,7 @@ public abstract class GitUtils {
         }
 
         try (Git git = Git.open(new File("."))) {
-            return git.log().setMaxCount(1).call().iterator().next().getName();
+            return safeGetFirstCommitName(git.log().setMaxCount(1).call().iterator());
         } catch (NoHeadException ignored) {
             return "";
         } catch (Exception e) {
@@ -322,7 +353,12 @@ public abstract class GitUtils {
 
         try (Git git = Git.open(new File("."))) {
             git.fetch().setCredentialsProvider(getCredentials()).call();
-            return git.log().setMaxCount(1).add(git.getRepository().resolve("origin/" + Config.getString("git.branch"))).call().iterator().next().getName();
+            ObjectId branchRef = git.getRepository().resolve("origin/" + Config.getString("git.branch"));
+            if (branchRef == null) {
+                return "";
+            }
+            
+            return safeGetFirstCommitName(git.log().setMaxCount(1).add(branchRef).call().iterator());
         } catch (Exception e) {
             MineCICD.log("Failed to get latest remote revision", Level.SEVERE);
             MineCICD.logError(e);
@@ -472,7 +508,7 @@ public abstract class GitUtils {
                             }
                         }
                     }
-                    String newCommit = git.log().setMaxCount(1).call().iterator().next().getName();
+                    String newCommit = safeGetFirstCommitName(git.log().setMaxCount(1).call().iterator());
                     changes = !newCommit.equals(oldCommit);
                 }
             } else {
@@ -518,7 +554,7 @@ public abstract class GitUtils {
                     }
 
                     git.pull().setStrategy(MergeStrategy.THEIRS).setCredentialsProvider(getCredentials()).setContentMergeStrategy(ContentMergeStrategy.THEIRS).call();
-                    String newCommit = git.log().setMaxCount(1).call().iterator().next().getName();
+                    String newCommit = safeGetFirstCommitName(git.log().setMaxCount(1).call().iterator());
                     changes = !newCommit.equals(oldCommit);
 
                     if (Config.getBoolean("experimental-jar-loading")) {
@@ -976,7 +1012,13 @@ public abstract class GitUtils {
         String lastCommit;
         long rollbackTime = calendar.getTimeInMillis();
         try (Git git = Git.open(new File("."))) {
-            RevCommit commit = git.log().setMaxCount(1).call().iterator().next();
+            java.util.Iterator<RevCommit> commits = git.log().setMaxCount(1).call().iterator();
+            if (!commits.hasNext()) {
+                // No commits yet, nothing to roll back
+                return;
+            }
+            
+            RevCommit commit = commits.next();
             PersonIdent author = commit.getAuthorIdent();
             Date commitTime = author.getWhen();
             long time = commitTime.getTime();

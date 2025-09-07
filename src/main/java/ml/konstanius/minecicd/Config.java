@@ -2,7 +2,8 @@ package ml.konstanius.minecicd;
 
 public abstract class Config {
     public static String getString(String path) {
-        return MineCICD.config.getString(path);
+        String value = MineCICD.config.getString(path);
+        return value != null ? value : "";
     }
 
     public static int getInt(String path) {

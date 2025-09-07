@@ -6,7 +6,6 @@ import org.bukkit.configuration.file.YamlConfiguration;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
-import java.util.Objects;
 import java.util.logging.Level;
 
 public class Migration {
@@ -14,7 +13,16 @@ public class Migration {
         int fileConfigVersion = MineCICD.config.getInt("version");
 
         YamlConfiguration pluginConfig = new YamlConfiguration();
-        pluginConfig.load(new InputStreamReader(Objects.requireNonNull(MineCICD.plugin.getResource("config.yml")), StandardCharsets.UTF_8));
+        java.io.InputStream resourceStream = MineCICD.plugin.getResource("config.yml");
+        
+        if (resourceStream == null) {
+            MineCICD.log("Cannot find config.yml resource in plugin JAR. Migration cannot continue.", Level.SEVERE);
+            MineCICD.log("MineCICD will now disable itself.", Level.SEVERE);
+            MineCICD.plugin.getPluginLoader().disablePlugin(MineCICD.plugin);
+            return;
+        }
+        
+        pluginConfig.load(new InputStreamReader(resourceStream, StandardCharsets.UTF_8));
         int pluginConfigVersion = pluginConfig.getInt("version");
 
         if (fileConfigVersion < pluginConfigVersion) {
