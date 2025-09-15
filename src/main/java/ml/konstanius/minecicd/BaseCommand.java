@@ -50,6 +50,20 @@ public class BaseCommand implements CommandExecutor {
             return true;
         }
 
+        // Special case for commands that require an initialized repository
+        // Exclude commands that should always work (help, pull, reload, doctor)
+        if (!"help".equals(subCommand) && !"pull".equals(subCommand) && !"reload".equals(subCommand) && 
+            !"doctor".equals(subCommand) && !GitUtils.activeRepoExists()) {
+            String repo = Config.getString("git.repo");
+            String branch = Config.getString("git.branch");
+            sender.sendMessage(getRichMessage("pull-repo-not-initialized", true, new HashMap<String, String>() {{
+                put("label", label);
+                put("repo", repo);
+                put("branch", branch);
+            }}));
+            return true;
+        }
+        
         Bukkit.getScheduler().runTaskAsynchronously(plugin, () -> {
             switch (subCommand) {
                 case "branch": {
@@ -254,9 +268,21 @@ public class BaseCommand implements CommandExecutor {
                         pulled = GitUtils.pull();
                     } catch (Exception e) {
                         MineCICD.logError(e);
-                        sender.sendMessage(getRichMessage("pull-failed", true, new HashMap<String, String>() {{
+                        // Provide a more user-friendly message for common initialization errors
+                        if (e.getMessage() != null && (e.getMessage().contains("Ref HEAD cannot be resolved") || 
+                            e.getMessage().contains("Remote origin did not advertise Ref for branch"))) {
+                            String repo = Config.getString("git.repo");
+                            String branch = Config.getString("git.branch");
+                            sender.sendMessage(getRichMessage("pull-repo-not-initialized", true, new HashMap<String, String>() {{
+                                put("label", label);
+                                put("repo", repo);
+                                put("branch", branch);
+                            }}));
+                        } else {
+                            sender.sendMessage(getRichMessage("pull-failed", true, new HashMap<String, String>() {{
                             put("error", e.getMessage());
                         }}));
+                        }
                         return;
                     }
 
@@ -330,7 +356,13 @@ public class BaseCommand implements CommandExecutor {
                     try {
                         List<String> lines = GitUtils.getBranchesInfo();
                         if (lines.isEmpty()) {
-                            sender.sendMessage("No repository initialized.");
+                            String repo = Config.getString("git.repo");
+                            String branch = Config.getString("git.branch");
+                            sender.sendMessage(getRichMessage("pull-repo-not-initialized", true, new HashMap<String, String>() {{
+                                put("label", label);
+                                put("repo", repo);
+                                put("branch", branch);
+                            }}));
                         } else {
                             sender.sendMessage("Branches ( * = current ):");
                             for (String l : lines) sender.sendMessage(l);
