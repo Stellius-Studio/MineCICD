@@ -15,6 +15,7 @@ pull-aborted: "&cThere are unpushed changes in the repository. Please push these
 pull-success: "&aAll changes have been pulled successfully."
 pull-no-changes: "&aNo changes to pull."
 pull-change: "&7- &a{change}"
+pull-repo-not-initialized: "&cRepository isn't set up yet. Run '/{label} pull' to initialize the repository with the configured branch."
 
 push-usage: "&cInvalid arguments. Usage: /{label} push <commit message>"
 push-failed: "&cError pushing repo: {error}"
