@@ -38,8 +38,12 @@ public class BaseCommand implements CommandExecutor {
         if (!subCommand.equals("pull") && !subCommand.equals("help") && !subCommand.equals("reload")) {
             // Check if repository is initialized before continuing with other commands
             if (!GitUtils.activeRepoExists()) {
+                String repo = Config.getString("git.repo");
+                String branch = Config.getString("git.branch");
                 sender.sendMessage(getRichMessage("pull-repo-not-initialized", true, new HashMap<String, String>() {{
                     put("label", label);
+                    put("repo", repo);
+                    put("branch", branch);
                 }}));
                 return true;
             }
@@ -227,8 +231,12 @@ public class BaseCommand implements CommandExecutor {
                         // Provide a more user-friendly message for common initialization errors
                         if (e.getMessage() != null && (e.getMessage().contains("Ref HEAD cannot be resolved") || 
                             e.getMessage().contains("Remote origin did not advertise Ref for branch"))) {
+                            String repo = Config.getString("git.repo");
+                            String branch = Config.getString("git.branch");
                             sender.sendMessage(getRichMessage("pull-repo-not-initialized", true, new HashMap<String, String>() {{
                                 put("label", label);
+                                put("repo", repo);
+                                put("branch", branch);
                             }}));
                         } else {
                             sender.sendMessage(getRichMessage("pull-failed", true, new HashMap<String, String>() {{
