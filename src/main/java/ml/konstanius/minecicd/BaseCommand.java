@@ -33,6 +33,21 @@ public class BaseCommand implements CommandExecutor {
         } else {
             subCommand = args[0].toLowerCase(Locale.getDefault());
         }
+        
+        // Special case for pull command - always allow it through to initialize repository
+        if (!subCommand.equals("pull") && !subCommand.equals("help") && !subCommand.equals("reload")) {
+            // Check if repository is initialized before continuing with other commands
+            if (!GitUtils.activeRepoExists()) {
+                String repo = Config.getString("git.repo");
+                String branch = Config.getString("git.branch");
+                sender.sendMessage(getRichMessage("pull-repo-not-initialized", true, new HashMap<String, String>() {{
+                    put("label", label);
+                    put("repo", repo);
+                    put("branch", branch);
+                }}));
+                return true;
+            }
+        }
 
         if (!sender.hasPermission("minecicd." + subCommand)) {
             sender.sendMessage(getRichMessage("no-permission", true, new HashMap<String, String>() {{
@@ -213,9 +228,21 @@ public class BaseCommand implements CommandExecutor {
                         pulled = GitUtils.pull();
                     } catch (Exception e) {
                         MineCICD.logError(e);
-                        sender.sendMessage(getRichMessage("pull-failed", true, new HashMap<String, String>() {{
-                            put("error", e.getMessage());
-                        }}));
+                        // Provide a more user-friendly message for common initialization errors
+                        if (e.getMessage() != null && (e.getMessage().contains("Ref HEAD cannot be resolved") || 
+                            e.getMessage().contains("Remote origin did not advertise Ref for branch"))) {
+                            String repo = Config.getString("git.repo");
+                            String branch = Config.getString("git.branch");
+                            sender.sendMessage(getRichMessage("pull-repo-not-initialized", true, new HashMap<String, String>() {{
+                                put("label", label);
+                                put("repo", repo);
+                                put("branch", branch);
+                            }}));
+                        } else {
+                            sender.sendMessage(getRichMessage("pull-failed", true, new HashMap<String, String>() {{
+                                put("error", e.getMessage());
+                            }}));
+                        }
                         return;
                     }
 
